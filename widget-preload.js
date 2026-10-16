@@ -1,0 +1,31 @@
+// The only API a custom widget gets. Widgets run sandboxed (no Node.js, no network); everything goes through here.
+const { contextBridge, ipcRenderer } = require("electron");
+
+const call = (name, ...args) => ipcRenderer.invoke("widget-api", name, ...args);
+const pad = (n) => String(n).padStart(2, "0");
+
+contextBridge.exposeInMainWorld("overlay", {
+  storage: {
+    get: (key) => call("storage.get", key),
+    set: (key, value) => call("storage.set", key, value),
+    all: () => call("storage.all"),
+  },
+  tasks: {
+    list: () => call("tasks.list"),
+    add: (task) => call("tasks.add", task),
+    update: (id, patch) => call("tasks.update", id, patch),
+    remove: (id) => call("tasks.remove", id),
+    onChange: (cb) => ipcRenderer.on("tasks-changed", (_e, list) => cb(list)),
+  },
+  notes: { get: () => call("notes.get") },
+  ask: (prompt) => call("ask", prompt),
+  openChat: (prompt) => ipcRenderer.send("widget-open-chat", String(prompt || "")),
+  today: () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; },
+
+  // used by the frame (panel.js, theme.js)
+  hidePanel: () => ipcRenderer.send("hide-panel"),
+  resizePanel: (w, h) => ipcRenderer.send("panel-resize", w, h),
+  getTheme: () => ipcRenderer.invoke("get-theme"),
+  onTheme: (cb) => ipcRenderer.on("theme", (_e, t) => cb(t)),
+  onPanelShown: (cb) => ipcRenderer.on("panel-shown", () => cb()),
+});

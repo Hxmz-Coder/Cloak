@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<title>Claude Notes</title>
+<link rel="stylesheet" href="theme.css" />
+<link rel="stylesheet" href="panel.css" />
+<style>
+  .badge { background: rgba(127,167,217,.16); color: #9dbbe3; }
+  #saved { transition: opacity .3s; }
+  .find { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 8px;
+    background: transparent; border: 1px solid var(--border); color: var(--muted); cursor: pointer; font-size: 12px; white-space: nowrap; }
+  .find:hover { color: var(--text); background: var(--panel-hi); }
+  .find svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linejoin: round; }
+  .find.spinning svg { animation: spin 1.2s linear infinite; }
+  #notes {
+    flex: 1; min-height: 0; width: 100%; resize: none; border: 0; border-radius: 0; outline: 0; background: transparent;
+    padding: 12px 16px 18px; font: 14px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--text);
+    user-select: text;
+  }
+  #notes::placeholder { color: var(--faint); }
+  .foot { display: none; padding: 7px 16px 9px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); flex-shrink: 0; }
+  .foot.show { display: block; }
+  .foot .ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="phead" title="Drag to move">
+    <div class="badge"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/></svg></div>
+    <div class="title">Notes <small id="saved"></small></div>
+    <button class="find" id="findBtn" title="Claude reads your notes and adds anything you need to do to your task list. Your notes stay exactly as they are.">
+      <svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>Find tasks</button>
+    <button class="icon-btn min" title="Minimize (Ctrl+Shift+Space brings it back)">
+      <svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+  </div>
+  <textarea id="notes" spellcheck="true" placeholder="Write anything here: class notes, ideas, reminders, things to follow up on.&#10;&#10;It's saved automatically and stays yours. Claude only reads it to find tasks, never changes it."></textarea>
+  <div class="foot" id="foot"></div>
+  <div class="grip" title="Resize"></div>
+</div>
+<script src="theme.js"></script>
+<script src="panel.js"></script>
+<script src="notes.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<title>Claude Settings</title>
+<link rel="stylesheet" href="theme.css" />
+<link rel="stylesheet" href="panel.css" />
+<style>
+  .badge { background: rgba(var(--accent-rgb), .16); color: var(--accent); }
+  .wrap { flex: 1; min-height: 0; display: flex; }
+  nav { width: 178px; flex-shrink: 0; padding: 10px 8px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+  nav button { text-align: left; background: none; border: 0; padding: 7px 10px; border-radius: 8px; cursor: pointer; color: var(--muted); font-size: 13px; }
+  nav button:hover { background: var(--panel); color: var(--text); }
+  nav button.on { background: rgba(var(--accent-rgb), .14); color: var(--text); }
+  main { flex: 1; min-width: 0; overflow-y: auto; padding: 6px 22px 28px; user-select: text; }
+  section { display: none; }
+  section.on { display: block; }
+  h2 { font-size: 16px; font-weight: 600; margin: 14px 0 2px; }
+  .lead { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
+  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); font-weight: 600; margin: 22px 0 8px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .row:first-of-type { border-top: 0; }
+  .row .grow { flex: 1; min-width: 0; }
+  .row .t { font-weight: 500; }
+  .row .d { color: var(--muted); font-size: 12px; margin-top: 1px; }
+  .muted { color: var(--muted); }
+  .hint { color: var(--muted); font-size: 12px; }
+  .ok { color: var(--ok); } .err { color: #ff9b8a; }
+  input[type=text], textarea { width: 100%; }
+  textarea { resize: vertical; min-height: 70px; line-height: 1.45; }
+
+  /* toggle switch */
+  .switch { position: relative; display: inline-block; vertical-align: middle; width: 36px; height: 20px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(255,255,255,.14); cursor: pointer; transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(16px); }
+
+  /* appearance */
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .sw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 2px rgba(0,0,0,.25); }
+  .sw.on { border-color: #fff; }
+  .custom-color { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  input[type=color] { width: 34px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: none; padding: 2px; cursor: pointer; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  .preview { margin-top: 18px; padding: 18px; border-radius: 14px; border: 1px dashed var(--border);
+    background: repeating-linear-gradient(45deg, #3a3f4a, #3a3f4a 12px, #454b57 12px, #454b57 24px); }
+  .preview .pp { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); }
+  .preview .pp b { font-weight: 600; }
+  .preview .card { margin-top: 12px; padding: 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .preview .chip { height: 28px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; }
+  .preview .chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+  .seg button { background: none; border: 0; padding: 6px 14px; cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.on { background: rgba(var(--accent-rgb), .16); color: var(--text); }
+
+  /* lists */
+  .item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 6px; }
+  .item .grow { flex: 1; min-width: 0; }
+  .item .t { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .d { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .acts { display: flex; gap: 2px; align-items: center; }
+  .item .icon-btn { width: 26px; height: 26px; }
+  .item .icon-btn svg { width: 14px; height: 14px; }
+  .tag { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.07); color: var(--muted); white-space: nowrap; }
+  .form { padding: 12px; border-radius: 12px; border: 1px solid rgba(var(--accent-rgb), .35); background: rgba(var(--accent-rgb), .05); margin: 4px 0 10px; display: flex; flex-direction: column; gap: 9px; }
+  .form label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  .form input[type=checkbox] { accent-color: var(--accent); }
+  .btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  /* widget builder */
+  .builder { padding: 14px; border-radius: 14px; border: 1px solid rgba(var(--accent-rgb), .35); background: rgba(var(--accent-rgb), .06); }
+  .builder textarea { min-height: 84px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+  .examples button { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .examples button:hover { color: var(--text); border-color: rgba(var(--accent-rgb), .5); }
+  .status { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(var(--accent-rgb), .25); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+  .change { margin-top: 8px; display: none; flex-direction: column; gap: 8px; }
+  .item.open-change { flex-wrap: wrap; }
+  .item.open-change .change { display: flex; flex-basis: 100%; }
+
+  /* hotkeys */
+  .key { min-width: 190px; text-align: center; padding: 7px 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; font-family: inherit; font-size: 12.5px; color: var(--text); }
+  .key.listening { border-color: var(--accent); color: var(--accent); }
+  .allowed code { font-family: Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="phead" title="Drag to move">
+    <div class="badge"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></div>
+    <div class="title">Settings</div>
+    <button class="icon-btn min" title="Close">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="wrap">
+    <nav id="nav">
+      <button data-s="appearance">Appearance</button>
+      <button data-s="top">Top widget</button>
+      <button data-s="shortcuts">Shortcut buttons</button>
+      <button data-s="widgets">Widgets</button>
+      <button data-s="claude">Claude &amp; privacy</button>
+      <button data-s="keys">Keyboard</button>
+      <button data-s="general">General</button>
+    </nav>
+    <main>
+      <!-- Appearance -->
+      <section id="s-appearance">
+        <h2>Appearance</h2>
+        <p class="lead">Changes apply to every widget right away.</p>
+        <h3>Accent color</h3>
+        <div class="swatches" id="swatches"></div>
+        <h3>Background opacity</h3>
+        <div class="row"><input type="range" id="opacity" min="50" max="100" step="1" /><span id="opacityVal" class="muted" style="width:44px;text-align:right"></span></div>
+        <div class="preview">
+          <div class="pp"><div class="logo">✳</div><b>Claude</b></div>
+          <div class="card">
+            <span class="chip"><i></i>Explain my screen</span><span class="chip"><i></i>Answer this</span>
+            <button class="btn primary">Allow</button><button class="btn">Decline</button>
+          </div>
+        </div>
+        <div class="btns" style="margin-top:14px"><button class="btn ghost" id="themeReset">Reset to Claude orange</button></div>
+      </section>
+
+      <!-- Top widget -->
+      <section id="s-top">
+        <h2>Top widget</h2>
+        <p class="lead">The small widget at the top of your screen. Hover it to open the chat bar.</p>
+        <h3>Text</h3>
+        <input type="text" id="pLabel" maxlength="24" placeholder="Claude" />
+        <h3>Also show</h3>
+        <div class="row"><div class="grow"><div class="t">The time</div></div><label class="switch"><input type="checkbox" id="pClock"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Open task count</div></div><label class="switch"><input type="checkbox" id="pCount"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">My next task</div><div class="d">The one due soonest.</div></div><label class="switch"><input type="checkbox" id="pNext"><span></span></label></div>
+        <h3>Position</h3>
+        <div class="seg" id="pPos"><button data-v="left">Left</button><button data-v="center">Center</button><button data-v="right">Right</button></div>
+      </section>
+
+      <!-- Shortcuts -->
+      <section id="s-shortcuts">
+        <h2>Shortcut buttons</h2>
+        <p class="lead">The buttons in the chat bar. Use <b>{clipboard}</b> in a prompt to insert whatever text you've copied.</p>
+        <div id="scList"></div>
+        <div id="scForm"></div>
+        <div class="btns" style="margin-top:8px">
+          <button class="btn primary" id="scAdd">Add shortcut</button>
+          <button class="btn ghost" id="scReset">Restore defaults</button>
+        </div>
+      </section>
+
+      <!-- Widgets -->
+      <section id="s-widgets">
+        <h2>Widgets</h2>
+        <p class="lead">Panels that appear with your show/hide shortcut. Drag them anywhere; they remember where you put them.</p>
+        <div class="builder">
+          <div class="t" style="font-weight:600;margin-bottom:6px">Create a widget with Claude</div>
+          <textarea id="bRequest" placeholder="Describe the widget you want. For example: a calendar that shows my tasks on their due dates, with a week view and a month view."></textarea>
+          <div class="examples" id="examples"></div>
+          <div class="btns"><button class="btn primary" id="bBuild">Build widget</button><div class="status" id="bStatus"></div></div>
+          <p class="hint" style="margin:10px 0 0">Claude writes the code and installs it just for you. Widgets run sandboxed: they can't use the internet or your files, only your tasks, notes and their own saved data.</p>
+        </div>
+        <h3>Your widgets</h3>
+        <div id="wList"></div>
+        <div class="btns" style="margin-top:6px"><button class="btn ghost" id="resetPos">Reset all widget positions</button></div>
+      </section>
+
+      <!-- Claude & privacy -->
+      <section id="s-claude">
+        <h2>Claude &amp; privacy</h2>
+        <p class="lead">Everything below stays on this PC. Claude only sees it when you ask for a recap or a task scan.</p>
+        <div class="row"><div class="grow"><div class="t">Screen memory</div><div class="d">Notes which app you're in and keeps screenshots from the last ~30 minutes, for "What did I just do?" and finding tasks.</div></div><label class="switch"><input type="checkbox" id="memoryEnabled"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Find tasks automatically</div><div class="d">Every 40 minutes, looks through recent activity and changed notes for things you need to do. Uses some of your Claude usage.</div></div><label class="switch"><input type="checkbox" id="autoScan"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Clear screen memory</div><div class="d">Deletes the saved activity and screenshots now.</div></div><button class="btn" id="clearMem">Clear</button></div>
+        <h3>Actions Claude may take without asking</h3>
+        <p class="hint" style="margin-top:0">Added when you tick "Always allow" on an approval card. Remove any to be asked again.</p>
+        <div id="allowList" class="allowed"></div>
+      </section>
+
+      <!-- Keyboard -->
+      <section id="s-keys">
+        <h2>Keyboard</h2>
+        <p class="lead">Click a shortcut, then press the new key combination. It must include Ctrl, Alt or the Windows key.</p>
+        <div class="row"><div class="grow"><div class="t">Show / hide everything</div><div class="d">Opens the chat bar and your widgets, or puts them away.</div></div><button class="key" data-k="toggle"></button></div>
+        <div class="row"><div class="grow"><div class="t">Ask about my screen</div><div class="d">Takes a screenshot and attaches it to your next question.</div></div><button class="key" data-k="capture"></button></div>
+        <div class="status" id="keyStatus" style="margin-top:6px"></div>
+      </section>
+
+      <!-- General -->
+      <section id="s-general">
+        <h2>General</h2>
+        <div class="row"><div class="grow"><div class="t">Start when I sign in to Windows</div></div><label class="switch"><input type="checkbox" id="openAtLogin"><span></span></label></div>
+        <h3>About</h3>
+        <p class="hint">Claude Overlay runs Claude through the Claude Code CLI on this computer, using your own Claude subscription login. No API key is used.</p>
+      </section>
+    </main>
+  </div>
+  <div class="grip" title="Resize"></div>
+</div>
+<script src="theme.js"></script>
+<script src="panel.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>
