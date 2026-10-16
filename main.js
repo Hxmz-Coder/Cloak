@@ -12,6 +12,14 @@ const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widge
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
+// Only one copy runs at a time; starting it again just opens the one that's already running.
+if (!app.requestSingleInstanceLock()) app.exit(0);
+app.on("second-instance", () => {
+  if (!widget) return;
+  showWidget(true);
+  widget.webContents.send("open-bar");
+});
+
 const SYSTEM = `You are Claude, running on the user's Windows PC from a small widget at the top of their screen.
 
 Work autonomously. When a request takes several steps, carry them all out without stopping to check in: read files, search, look things up, and keep going until it's done. Don't ask "should I continue?" for routine steps.
