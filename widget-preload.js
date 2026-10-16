@@ -18,7 +18,10 @@ contextBridge.exposeInMainWorld("overlay", {
     onChange: (cb) => ipcRenderer.on("tasks-changed", (_e, list) => cb(list)),
   },
   notes: { get: () => call("notes.get") },
-  pill: { setStatus: (text) => call("pill.setStatus", text) },
+  pill: {
+    setStatus: (text) => call("pill.setStatus", text),
+    notify: (text, minutes) => call("pill.notify", text, minutes),
+  },
   ask: (prompt) => call("ask", prompt),
   openChat: (prompt) => ipcRenderer.send("widget-open-chat", String(prompt || "")),
   today: () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; },
@@ -26,6 +29,7 @@ contextBridge.exposeInMainWorld("overlay", {
   // used by the frame (panel.js, theme.js)
   hidePanel: () => ipcRenderer.send("hide-panel"),
   resizePanel: (w, h) => ipcRenderer.send("panel-resize", w, h),
+  setPanelBounds: (b) => ipcRenderer.send("panel-set-bounds", b),
   getTheme: () => ipcRenderer.invoke("get-theme"),
   onTheme: (cb) => ipcRenderer.on("theme", (_e, t) => cb(t)),
   onPanelShown: (cb) => ipcRenderer.on("panel-shown", () => cb()),

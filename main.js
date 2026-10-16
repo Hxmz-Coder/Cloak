@@ -1,14 +1,16 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, clipboard, protocol, session, net } = require("electron");
+const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, clipboard, protocol, session, net, safeStorage, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { pathToFileURL } = require("url");
-const { runClaude, friendlyError } = require("./lib/claude");
+const { runClaude, friendlyError, findClaude, setAuth } = require("./lib/claude");
+const { spawn } = require("child_process");
 const { ChatSession } = require("./lib/chat");
 const { TOOLS, AUTO_ALLOWED, describeDenial } = require("./lib/permissions");
 const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
 const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widgets");
+const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
 
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -59,22 +61,13 @@ const WIDGET = { pill: [160, 58], bar: [680, 150], chat: [680, 620], edit: [680,
 const PANELS = {
   tasks: { file: "tasks.html", size: [360, 440], min: [260, 200], label: "Tasks" },
   notes: { file: "notes.html", size: [380, 460], min: [260, 200], label: "Notes" },
-  settings: { file: "settings.html", size: [800, 600], min: [620, 420], label: "Settings", standalone: true },
+  settings: { file: "settings.html", size: [800, 600], min: [800, 600], label: "Settings", standalone: true, fixed: true },
+  welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
 const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95 };
 const DEFAULT_HOTKEYS = { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S" };
 
-const DEFAULT_SHORTCUTS = [
-  { id: "recap", label: "What did I just do?", action: "recap" },
-  { id: "explain", label: "Explain my screen", prompt: "Explain what's on my screen.", screenshot: true, autoSend: true },
-  { id: "answer", label: "Answer this", prompt: "Answer the question shown on my screen. Give the answer first, then a short explanation of why.", screenshot: true, autoSend: true },
-  { id: "summarize", label: "Summarize", prompt: "Summarize what's on my screen in 3-5 bullets.", screenshot: true, autoSend: true },
-  { id: "fix", label: "Fix my writing", prompt: "Fix the grammar and improve the clarity of this text. Return only the improved text:\n\n{clipboard}", screenshot: false, autoSend: true },
-  { id: "translate", label: "Translate", prompt: "Translate this to English (or to Spanish if it's already English):\n\n{clipboard}", screenshot: false, autoSend: true },
-  { id: "code", label: "Explain code", prompt: "Explain this code clearly and point out any bugs:\n\n{clipboard}", screenshot: false, autoSend: true },
-  { id: "scan", label: "Find tasks", action: "scan" },
-];
-const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], position: "center" };
+const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], showMode: true, position: "center" };
 
 const AUTO_SCAN_EVERY_MS = 40 * 60_000;
 
@@ -109,18 +102,47 @@ function loadConfig() {
 function saveConfig(patch) {
   fs.writeFileSync(configPath(), JSON.stringify({ ...loadConfig(), ...patch }, null, 2));
 }
-function getShortcuts() {
+// ---------- modes ----------
+// Each mode has its own instructions and shortcut buttons (lib/modes.js). The shortcut list from before modes
+// existed becomes the General mode's.
+function getModes() {
   const cfg = loadConfig();
-  if (!cfg.shortcuts) return DEFAULT_SHORTCUTS;
-  if (cfg.shortcutsVersion !== 2) {
-    // v1 had emoji icons and no recap/scan tiles.
-    let list = cfg.shortcuts.map(({ icon, ...s }) => s);
-    if (!list.some((s) => s.action === "recap")) list.unshift(DEFAULT_SHORTCUTS[0]);
-    if (!list.some((s) => s.action === "scan")) list.push(DEFAULT_SHORTCUTS[DEFAULT_SHORTCUTS.length - 1]);
-    saveConfig({ shortcuts: list, shortcutsVersion: 2 });
-    return list;
+  if (!cfg.modes) {
+    let legacy = cfg.shortcuts;
+    if (legacy && cfg.shortcutsVersion !== 2) legacy = legacy.map(({ icon, ...s }) => s); // v1 had emoji icons
+    const modes = normalizeModes(null, legacy);
+    saveConfig({ modes, activeMode: cfg.activeMode || "general" });
+    return modes;
   }
-  return cfg.shortcuts;
+  return normalizeModes(cfg.modes);
+}
+function activeMode() {
+  const modes = getModes();
+  return modes.find((m) => m.id === loadConfig().activeMode) || modes[0];
+}
+const getShortcuts = (modeId) => (modeId ? getModes().find((m) => m.id === modeId) : activeMode())?.shortcuts || GENERAL_SHORTCUTS;
+function saveModes(modes) {
+  saveConfig({ modes });
+  applyMode();
+}
+// Writes Claude's instructions for the active mode and tells every window. The chat restarts (keeping the
+// conversation) the next time it's used, because its options include the mode.
+function applyMode() {
+  const mode = activeMode();
+  fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), SYSTEM + modePrompt(mode));
+  broadcast("mode-changed", { id: mode.id, name: mode.name, shortcuts: mode.shortcuts });
+  chat?.warm();
+}
+function setActiveMode(id) {
+  if (!getModes().some((m) => m.id === id)) return false;
+  saveConfig({ activeMode: id });
+  applyMode();
+  buildTray();
+  return true;
+}
+function modeMenuItems() {
+  const cur = activeMode().id;
+  return getModes().map((m) => ({ label: m.name, type: "radio", checked: m.id === cur, click: () => setActiveMode(m.id) }));
 }
 const readNotes = () => { try { return fs.readFileSync(notesPath(), "utf8"); } catch { return ""; } };
 
@@ -197,7 +219,7 @@ function panelSpec(name) {
 function defaultBounds(name) {
   const { workArea } = screen.getPrimaryDisplay();
   const [w, h] = panelSpec(name)?.size || [380, 440];
-  if (name === "settings") return { x: Math.round(workArea.x + (workArea.width - w) / 2), y: workArea.y + 90, width: w, height: h };
+  if (name === "settings" || name === "welcome") return { x: Math.round(workArea.x + (workArea.width - w) / 2), y: Math.round(workArea.y + Math.max(60, (workArea.height - h) / 2)), width: w, height: h };
   if (name === "tasks" || name === "notes") {
     const x = workArea.x + workArea.width - w - 16 - (name === "notes" ? PANELS.tasks.size[0] + 12 : 0);
     return { x, y: workArea.y + 64, width: w, height: h };
@@ -209,6 +231,7 @@ function defaultBounds(name) {
 function savedBounds(name) {
   const b = loadConfig().panelBounds[name];
   if (!b) return defaultBounds(name);
+  if (panelSpec(name)?.fixed) b.width = panelSpec(name).size[0], b.height = panelSpec(name).size[1]; // fixed-size windows keep their size
   // Only reuse it if it's still on a connected screen (e.g. after unplugging a monitor).
   const onScreen = screen.getAllDisplays().some(({ workArea: a }) =>
     b.x + 40 < a.x + a.width && b.x + b.width - 40 > a.x && b.y >= a.y - 10 && b.y + 30 < a.y + a.height);
@@ -325,6 +348,8 @@ function chatOptions() {
     addDirs: [os.homedir()],
     systemPromptFile: path.join(workDir(), "system-prompt.txt"),
     ...(CHAT_SPEEDS[cfg.chatSpeed] || CHAT_SPEEDS.balanced),
+    mode: activeMode().id + ":" + activeMode().instructions, // a mode change restarts the chat with the new instructions
+    auth: authSignature(),                                    // so does switching between subscription and API key
   };
 }
 
@@ -345,7 +370,7 @@ function saveHistory(messages) {
 
 // display: what to show as your message in the chat (null for follow-ups like approvals).
 async function chatTurn(prompt, { display = null, image = false, extraAllowed = [] } = {}) {
-  const context = `[Widget context. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}]` +
+  const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}]` +
     (declinedNote ? `\n[Widget: ${declinedNote}]` : "");
   declinedNote = "";
   const full = `${context}\n\n${prompt}`;
@@ -500,17 +525,30 @@ ipcMain.on("focus-panel", (e) => BrowserWindow.fromWebContents(e.sender)?.focus(
 ipcMain.on("panel-resize", (e, width, height) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const name = Object.keys(panels).find((n) => panels[n] === win);
-  if (!name) return;
+  if (!name || panelSpec(name).fixed) return;
   const [mw, mh] = panelSpec(name).min;
   const b = win.getBounds();
   win.setBounds({ ...b, width: Math.max(mw, Math.round(width)), height: Math.max(mh, Math.round(height)) });
+});
+// Resizing from any edge: when dragging the left/top edge, keep the opposite edge in place at the minimum size.
+ipcMain.on("panel-set-bounds", (e, b) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const name = Object.keys(panels).find((n) => panels[n] === win);
+  if (!name || panelSpec(name).fixed || !b) return;
+  const [mw, mh] = panelSpec(name).min;
+  const cur = win.getBounds();
+  const width = Math.max(mw, Math.round(b.width)), height = Math.max(mh, Math.round(b.height));
+  const x = b.anchorRight ? cur.x + cur.width - width : Math.round(b.x);
+  const y = b.anchorBottom ? cur.y + cur.height - height : Math.round(b.y);
+  win.setBounds({ x, y, width, height });
 });
 ipcMain.handle("capture", () => captureScreen());
 ipcMain.handle("read-clipboard", () => clipboard.readText());
 ipcMain.on("write-clipboard", (_e, text) => clipboard.writeText(text));
 ipcMain.handle("get-config", () => {
   const cfg = loadConfig();
-  return { shortcuts: getShortcuts(), memoryEnabled: cfg.memoryEnabled, pill: cfg.pill, widgetStatus, panels: panelList() };
+  const mode = activeMode();
+  return { shortcuts: mode.shortcuts, mode: { id: mode.id, name: mode.name }, memoryEnabled: cfg.memoryEnabled, pill: cfg.pill, widgetStatus, panels: panelList() };
 });
 
 // Folder button: every widget in a menu, plus open/hide all.
@@ -536,15 +574,74 @@ ipcMain.handle("set-pill", (_e, pill) => {
   broadcast("pill-changed", loadConfig().pill);
   return true;
 });
-ipcMain.handle("set-shortcuts", (_e, shortcuts) => {
-  saveConfig({ shortcuts, shortcutsVersion: 2 });
-  broadcast("shortcuts-changed", shortcuts);
+// Shortcut buttons belong to a mode (the active one unless another is named).
+ipcMain.handle("set-shortcuts", (_e, shortcuts, modeId) => {
+  const id = modeId || activeMode().id;
+  saveModes(getModes().map((m) => (m.id === id ? { ...m, shortcuts } : m)));
   return true;
 });
-ipcMain.handle("reset-shortcuts", () => {
-  saveConfig({ shortcuts: DEFAULT_SHORTCUTS, shortcutsVersion: 2 });
-  broadcast("shortcuts-changed", DEFAULT_SHORTCUTS);
-  return DEFAULT_SHORTCUTS;
+ipcMain.handle("reset-shortcuts", (_e, modeId) => {
+  const id = modeId || activeMode().id;
+  const defaults = (defaultModeFor(id) || defaultModeFor("general")).shortcuts;
+  saveModes(getModes().map((m) => (m.id === id ? { ...m, shortcuts: defaults } : m)));
+  return defaults;
+});
+
+// ---------- modes ----------
+ipcMain.handle("get-modes", () => ({ modes: getModes(), active: activeMode().id }));
+ipcMain.handle("set-active-mode", (_e, id) => setActiveMode(id));
+ipcMain.on("modes-menu", () => {
+  Menu.buildFromTemplate([
+    { label: "Mode", enabled: false },
+    ...modeMenuItems(),
+    { type: "separator" },
+    { label: "Edit modes…", click: () => openSettings("modes") },
+    { label: "Settings…", click: () => openSettings() },
+  ]).popup({ window: widget });
+});
+// Create or update a mode (name, description, instructions, shortcuts).
+ipcMain.handle("save-mode", (_e, mode) => {
+  const modes = getModes();
+  const clean = {
+    id: mode.id || `m${Date.now().toString(36)}`,
+    name: String(mode.name || "New mode").trim().slice(0, 24) || "New mode",
+    description: String(mode.description || "").slice(0, 200),
+    instructions: String(mode.instructions || "").slice(0, 4000),
+    shortcuts: Array.isArray(mode.shortcuts) ? mode.shortcuts : (modes.find((m) => m.id === mode.id)?.shortcuts || GENERAL_SHORTCUTS),
+  };
+  const existing = modes.find((m) => m.id === clean.id);
+  saveModes(existing ? modes.map((m) => (m.id === clean.id ? { ...m, ...clean } : m)) : [...modes, clean]);
+  return { modes: getModes(), active: activeMode().id, saved: clean.id };
+});
+ipcMain.handle("delete-mode", (_e, id) => {
+  if (id === "general") return { modes: getModes(), active: activeMode().id };
+  if (activeMode().id === id) saveConfig({ activeMode: "general" });
+  saveModes(getModes().filter((m) => m.id !== id));
+  return { modes: getModes(), active: activeMode().id };
+});
+// Built-in modes can be put back the way they shipped.
+ipcMain.handle("restore-mode", (_e, id) => {
+  const d = defaultModeFor(id);
+  if (d) saveModes(getModes().map((m) => (m.id === id ? { ...d } : m)));
+  return { modes: getModes(), active: activeMode().id };
+});
+// Claude designs a mode from a description: name, instructions and shortcut buttons.
+ipcMain.handle("build-mode", async (_e, request) => {
+  if (!String(request || "").trim()) return { ok: false, error: "Describe the mode first." };
+  const res = await runClaude({ cwd: workDir(), prompt: modeBuildPrompt(String(request).trim()), tools: "", jsonSchema: MODE_SCHEMA, effort: "medium", persist: false }).done;
+  if (res.error) return { ok: false, error: friendlyError(res.error) };
+  if (res.json.is_error) return { ok: false, error: friendlyError(res.json.result) };
+  let m = res.json.structured_output;
+  if (!m) { try { m = JSON.parse(res.json.result); } catch {} }
+  if (!m?.name) return { ok: false, error: "Claude didn't return a mode. Try describing it again." };
+  const shortcuts = [
+    GENERAL_SHORTCUTS[0], // "What did I just do?"
+    ...(m.shortcuts || []).slice(0, 6).map((s, i) => ({ id: `c${Date.now().toString(36)}${i}`, label: String(s.label).slice(0, 28), prompt: String(s.prompt), screenshot: !!s.screenshot, autoSend: true })),
+    GENERAL_SHORTCUTS[GENERAL_SHORTCUTS.length - 1], // "Find tasks"
+  ];
+  const id = `m${Date.now().toString(36)}`;
+  saveModes([...getModes(), { id, name: String(m.name).slice(0, 24), description: m.description || "", instructions: m.instructions || "", shortcuts }]);
+  return { ok: true, id, modes: getModes(), active: activeMode().id };
 });
 
 // ---------- settings ----------
@@ -559,15 +656,15 @@ ipcMain.handle("set-theme", (_e, theme) => {
 ipcMain.handle("get-settings", () => {
   const cfg = loadConfig();
   return {
-    theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys,
-    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced",
+    theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys, modes: getModes(), activeMode: activeMode().id,
+    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", auth: authStatus(),
     openAtLogin: app.getLoginItemSettings(loginItemArgs()).openAtLogin,
     panels: panelList(), building, version: app.getVersion(),
   };
 });
 // Simple on/off and list settings.
 ipcMain.handle("set-setting", (_e, key, value) => {
-  if (key === "memoryEnabled" || key === "autoScan") saveConfig({ [key]: !!value });
+  if (key === "memoryEnabled" || key === "autoScan" || key === "notesSync") saveConfig({ [key]: !!value });
   else if (key === "autoAllow" && Array.isArray(value)) { saveConfig({ autoAllow: value.map(String) }); chat.warm(); }
   else if (key === "chatSpeed" && CHAT_SPEEDS[value]) { saveConfig({ chatSpeed: value }); chat.warm(); }
   else if (key === "openAtLogin") app.setLoginItemSettings({ ...loginItemArgs(), openAtLogin: !!value });
@@ -611,6 +708,101 @@ ipcMain.handle("panel-enabled", (_e, name, on) => {
   return panelList();
 });
 ipcMain.handle("panel-show", (_e, name) => { showPanel(name); return panelList(); });
+
+// ---------- sign-in: Claude subscription or Anthropic API key ----------
+// The API key is stored encrypted with Windows' own protection (safeStorage) and only ever handed to the CLI.
+function loadAuth() {
+  const cfg = loadConfig();
+  let apiKey = null;
+  if (cfg.authMode === "apiKey" && cfg.apiKeyEnc && safeStorage.isEncryptionAvailable()) {
+    try { apiKey = safeStorage.decryptString(Buffer.from(cfg.apiKeyEnc, "base64")); } catch {}
+  }
+  setAuth({ mode: cfg.authMode, apiKey });
+}
+const authSignature = () => { const c = loadConfig(); return `${c.authMode || "subscription"}:${(c.apiKeyEnc || "").slice(-16)}`; };
+function authStatus() {
+  const cfg = loadConfig();
+  return {
+    mode: cfg.authMode === "apiKey" ? "apiKey" : "subscription",
+    keyHint: cfg.apiKeyHint || null,
+    claudeInstalled: !!findClaude(),
+    onboarded: !!cfg.onboarded,
+  };
+}
+ipcMain.handle("auth-status", () => authStatus());
+ipcMain.handle("auth-set", (_e, { mode, apiKey }) => {
+  const patch = { authMode: mode === "apiKey" ? "apiKey" : "subscription" };
+  if (mode === "apiKey" && apiKey) {
+    const key = String(apiKey).trim();
+    if (!/^sk-ant-[\w-]{20,}$/.test(key)) return { ok: false, error: "That doesn't look like an Anthropic API key. It should start with sk-ant-." };
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "Windows can't store the key securely on this account." };
+    patch.apiKeyEnc = safeStorage.encryptString(key).toString("base64");
+    patch.apiKeyHint = `sk-ant-…${key.slice(-4)}`;
+  }
+  if (patch.authMode === "apiKey" && !patch.apiKeyEnc && !loadConfig().apiKeyEnc) return { ok: false, error: "Paste your API key first." };
+  saveConfig(patch);
+  loadAuth();
+  chat.kill();
+  chat.warm();
+  return { ok: true, status: authStatus() };
+});
+// A tiny real request, to confirm Claude answers with the chosen sign-in.
+ipcMain.handle("auth-test", async () => {
+  if (!findClaude()) return { ok: false, error: "Claude Code isn't installed yet." };
+  const res = await runClaude({ cwd: workDir(), prompt: "Reply with just the word: ready", tools: "", model: "haiku", effort: "low", persist: false }).done;
+  if (res.error) return { ok: false, error: friendlyError(res.error) };
+  if (res.json.is_error) return { ok: false, error: friendlyError(res.json.result) };
+  return { ok: true };
+});
+// Opens a visible PowerShell window. Used for the official Claude Code installer and for signing in.
+function openTerminal(script) {
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY; // signing in should use your Claude account, not a key from the environment
+  spawn("powershell.exe", ["-NoExit", "-NoProfile", "-Command", script], { detached: true, stdio: "ignore", env }).unref();
+}
+ipcMain.on("install-claude", () => openTerminal(
+  "Write-Host 'Installing Claude Code (official installer from claude.ai)...' -ForegroundColor Cyan; " +
+  "irm https://claude.ai/install.ps1 | iex; Write-Host ''; " +
+  "Write-Host 'Done. Go back to overclaude and click Check again. You can close this window.' -ForegroundColor Green"));
+ipcMain.on("open-claude-login", () => {
+  const exe = findClaude();
+  if (!exe) return;
+  openTerminal(
+    "Write-Host 'Sign in to Claude:' -ForegroundColor Cyan; " +
+    "Write-Host '  1. Type /login and press Enter'; " +
+    "Write-Host '  2. Choose your Claude account (Pro or Max), not Anthropic Console'; " +
+    "Write-Host '  3. Finish in your browser, then type /exit and go back to overclaude'; Write-Host ''; " +
+    `& '${exe.replace(/'/g, "''")}'`);
+});
+// Only a few known pages can be opened from the setup screens.
+ipcMain.on("open-external", (_e, url) => {
+  if (/^https:\/\/(console\.anthropic\.com|claude\.ai|claude\.com|code\.claude\.com|nodejs\.org|github\.com\/Hxmz-Coder)\//.test(String(url))) shell.openExternal(url);
+});
+
+// ---------- welcome / setup ----------
+function openWelcome(step) {
+  showPanel("welcome", true);
+  if (!step) return;
+  const wc = panels.welcome.webContents;
+  if (wc.isLoading()) wc.once("did-finish-load", () => wc.send("welcome-step", step));
+  else wc.send("welcome-step", step);
+}
+ipcMain.on("open-welcome", (_e, step) => openWelcome(step));
+ipcMain.handle("welcome-done", (_e, { profile, mode }) => {
+  saveConfig({ onboarded: true, profile: profile || {} });
+  if (mode) setActiveMode(mode);
+  hidePanel("welcome");
+  focusWidget();
+  widget.webContents.send("open-bar");
+  return true;
+});
+// Buttons in the welcome tour that show the real thing.
+ipcMain.on("tour", (_e, what) => {
+  if (what === "bar") { focusWidget(); widget.webContents.send("open-bar"); }
+  if (what === "panels") { showPanel("tasks"); showPanel("notes"); }
+  if (what === "settings") openSettings();
+  if (what === "modes") { focusWidget(); widget.webContents.send("open-bar"); }
+});
 
 // ---------- custom widgets ----------
 ipcMain.handle("widget-delete", (_e, id) => {
@@ -685,6 +877,14 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
       const text = args[0] == null ? "" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 60);
       widgetStatus[id] = text;
       widget?.webContents.send("widget-status", { id, text });
+      return true;
+    }
+    case "pill.notify": {
+      // Something happening right now (e.g. "Now: Dentist"). Shown on the pill for a few minutes even if you
+      // didn't pick this widget for the pill. "" clears it.
+      const text = args[0] == null ? "" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 50);
+      const minutes = Math.min(30, Math.max(1, Number(args[1]) || 10));
+      widget?.webContents.send("pill-alert", { id, text, minutes });
       return true;
     }
     case "ask": {
@@ -766,7 +966,35 @@ ipcMain.on("task-help", (_e, task) => {
 });
 
 ipcMain.handle("notes-get", () => readNotes());
-ipcMain.handle("notes-set", (_e, text) => { fs.writeFileSync(notesPath(), String(text)); return true; });
+ipcMain.handle("notes-set", (_e, text) => {
+  fs.writeFileSync(notesPath(), String(text));
+  if (loadConfig().notesSync !== false) scheduleNotesSync();
+  return true;
+});
+ipcMain.handle("notes-sync-now", () => syncNotes(true));
+
+// Notes turn into tasks on their own: a little while after you stop typing, Claude reads the changed notes.
+// At most once a minute, and only when the notes actually changed.
+const NOTES_SYNC_DELAY_MS = 20_000;
+let notesSyncTimer = null, lastNotesSync = 0;
+function scheduleNotesSync(delay = NOTES_SYNC_DELAY_MS) {
+  clearTimeout(notesSyncTimer);
+  notesSyncTimer = setTimeout(() => syncNotes(false), delay);
+}
+async function syncNotes(force) {
+  const text = readNotes().trim();
+  const send = (state) => panels.notes?.webContents.send("notes-sync", state);
+  if (!text) return send({ state: "idle" });
+  if (!force && text === notesScannedText) return send({ state: "done", added: [] });
+  if (scanning) return scheduleNotesSync(15_000);
+  const wait = 60_000 - (Date.now() - lastNotesSync);
+  if (!force && wait > 0) return scheduleNotesSync(wait);
+  lastNotesSync = Date.now();
+  send({ state: "syncing" });
+  const r = await scanTasks({ activity: false, notes: true });
+  send(r.error ? { state: "error", error: r.error } : { state: "done", added: r.added });
+  return r;
+}
 
 // ---------- tray ----------
 const prettyKey = (a) => a.replace(/CommandOrControl/g, "Ctrl").replace(/\+/g, "+");
@@ -788,7 +1016,9 @@ function buildTray() {
     { label: `Show / hide everything    ${prettyKey(cfg.hotkeys.toggle)}`, click: toggleAll },
     { label: "Tasks", click: () => togglePanel("tasks") },
     { label: "Notes", click: () => togglePanel("notes") },
+    { label: "Mode", submenu: modeMenuItems() },
     { label: "Settings", click: () => openSettings() },
+    { label: "Setup guide", click: () => openWelcome() },
     { type: "separator" },
     { label: "Screen memory", type: "checkbox", checked: cfg.memoryEnabled, click: (i) => { saveConfig({ memoryEnabled: i.checked }); buildTray(); } },
     { label: "Find tasks automatically", type: "checkbox", checked: cfg.autoScan, click: (i) => { saveConfig({ autoScan: i.checked }); buildTray(); } },
@@ -803,7 +1033,7 @@ function buildTray() {
 // ---------- startup ----------
 app.whenReady().then(() => {
   fs.mkdirSync(workDir(), { recursive: true });
-  fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), SYSTEM);
+  fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), SYSTEM + modePrompt(activeMode()));
   clearChatScreenshots();
 
   tasks = new TaskStore(path.join(userData(), "tasks.json"), (list) => broadcast("tasks-changed", list));
@@ -813,6 +1043,7 @@ app.whenReady().then(() => {
     onWelcomeBack: (minutes) => widget.webContents.send("welcome-back", minutes),
   });
   memory.start();
+  loadAuth();
   chat = new ChatSession(chatOptions);
   chat.sessionId = loadHistory().sessionId;
   chat.warm(); // start Claude now so the first message is quick
@@ -821,7 +1052,10 @@ app.whenReady().then(() => {
 
   widget = makeWindow("index.html", WIDGET.pill);
   placeWidget("pill");
-  widget.once("ready-to-show", () => { if (!loadConfig().mainHidden) widget.showInactive(); });
+  widget.once("ready-to-show", () => {
+    if (!loadConfig().mainHidden) widget.showInactive();
+    if (!loadConfig().onboarded) openWelcome(); // first launch: the setup guide
+  });
   widgets = new WidgetStore(path.join(userData(), "widgets"));
   setupWidgetSession();
   createPanel("tasks");

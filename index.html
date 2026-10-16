@@ -23,14 +23,23 @@
   #pillExtra { display: inline-flex; gap: 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
   #pillExtra:empty { display: none; }
   #pillExtra .next { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  /* the active mode: a small tag on the pill, a switcher in the bar */
+  #pillMode { font-size: 11px; font-weight: 600; color: var(--accent); background: rgba(var(--accent-rgb), .14);
+    border-radius: 999px; padding: 1px 8px; }
+  #pillMode:empty { display: none; }
+  .mode-btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 6px 0 10px; border-radius: 999px;
+    border: 1px solid rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .12); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; }
+  .mode-btn:hover { background: rgba(var(--accent-rgb), .22); }
+  .mode-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+  body.alert #status { color: var(--accent); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); display: none; }
-  body.unread .dot, body.away .dot, body.news .dot { display: block; }
+  body.unread .dot, body.news .dot, body.alert .dot { display: block; }
   body.news .dot { background: var(--ok); }
 
   /* Dot style: just the logo in a small circle. A ring shows when something's waiting. */
   body.dot-style[data-mode="pill"] .top { justify-content: center; padding: 0; }
   body.dot-style[data-mode="pill"] .pill-info { display: none !important; }
-  body.dot-style.unread[data-mode="pill"] .logo, body.dot-style.news[data-mode="pill"] .logo, body.dot-style.away[data-mode="pill"] .logo {
+  body.dot-style.unread[data-mode="pill"] .logo, body.dot-style.news[data-mode="pill"] .logo, body.dot-style.alert[data-mode="pill"] .logo {
     box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
 
   #input { flex: 1; min-width: 60px; resize: none; background: transparent; border: 0; outline: 0; color: var(--text);
@@ -135,9 +144,13 @@
 <div class="shell" id="shell">
   <div class="top">
     <div class="logo">✳</div>
-    <div class="pill-info pill-only" id="pillInfo"><span id="status"></span><span id="pillExtra"></span><span class="dot"></span></div>
+    <div class="pill-info pill-only" id="pillInfo"><span id="status"></span><span id="pillMode"></span><span id="pillExtra"></span><span class="dot"></span></div>
+    <button class="mode-btn expanded-only" id="modeBtn" title="Switch mode"><span id="modeName">General</span>
+      <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>
     <textarea id="input" rows="1" placeholder="Ask Claude, or tell it what to do…"></textarea>
     <div class="actions">
+      <button class="icon-btn" id="newChatBtn" title="New chat">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="icon-btn" id="shotBtn" title="Attach a screenshot (Ctrl+Shift+S)">
         <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
       <div class="sep"></div>

@@ -1,6 +1,7 @@
-// Notes panel: your own writing, autosaved. Claude only reads it (Find tasks); it never edits it.
+// Notes panel: your own writing, autosaved. To-dos in it are added to your Tasks automatically (overclaude asks
+// Claude a few seconds after you stop typing); Claude only reads your notes and never changes them.
 const notes = document.getElementById("notes"), saved = document.getElementById("saved"), foot = document.getElementById("foot");
-const findBtn = document.getElementById("findBtn");
+const syncBtn = document.getElementById("syncBtn"), syncText = document.getElementById("syncText");
 let saveTimer = null, footTimer = null;
 
 async function save() {
@@ -12,28 +13,45 @@ async function save() {
   setTimeout(() => (saved.style.opacity = 0), 1500);
 }
 // Autosave shortly after you stop typing.
-notes.addEventListener("input", () => { clearTimeout(saveTimer); saveTimer = setTimeout(save, 500); });
+notes.addEventListener("input", () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 500);
+  setSync("pending", "Will sync tasks…");
+});
 notes.addEventListener("blur", () => { if (saveTimer) save(); });
 window.addEventListener("beforeunload", () => { if (saveTimer) window.overlay.setNotes(notes.value); });
 
-function say(html) {
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function say(html, keep) {
   foot.innerHTML = html;
   foot.classList.add("show");
   clearTimeout(footTimer);
-  footTimer = setTimeout(() => foot.classList.remove("show"), 8000);
+  if (!keep) footTimer = setTimeout(() => foot.classList.remove("show"), 8000);
 }
-const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function setSync(state, text) {
+  syncBtn.className = `sync ${state}`;
+  syncText.textContent = text;
+}
 
-findBtn.onclick = async () => {
-  if (findBtn.classList.contains("spinning")) return;
+// Status from the automatic sync.
+window.overlay.onNotesSync((s) => {
+  if (s.state === "syncing") setSync("syncing", "Syncing tasks…");
+  else if (s.state === "idle") setSync("", "Tasks sync on");
+  else if (s.state === "error") {
+    setSync("error", "Not synced");
+    // Most often Claude isn't set up yet: offer the setup guide.
+    say(`${esc(s.error)} <a id="setupLink">Set up Claude</a>`, true);
+    document.getElementById("setupLink").onclick = () => window.overlay.openWelcome("connect");
+  } else {
+    setSync("done", s.added?.length ? `Added ${s.added.length} task${s.added.length > 1 ? "s" : ""}` : "Tasks synced");
+    if (s.added?.length) say(`<span class="ok">Added to your tasks:</span> ${s.added.map(esc).join(" · ")}`);
+  }
+});
+// Sync right now instead of waiting.
+syncBtn.onclick = async () => {
+  if (syncBtn.classList.contains("syncing")) return;
   if (saveTimer) await save();
-  findBtn.classList.add("spinning");
-  say("Reading your notes…");
-  const r = await window.overlay.scanTasks({ activity: false, notes: true });
-  findBtn.classList.remove("spinning");
-  if (r.error) say(esc(r.error));
-  else if (!r.added.length) say("No new tasks in your notes.");
-  else say(`<span class="ok">Added ${r.added.length} task${r.added.length > 1 ? "s" : ""}:</span> ${r.added.map(esc).join(" · ")}`);
+  window.overlay.syncNotesNow();
 };
 
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") { if (saveTimer) save(); window.overlay.hidePanel(); } });

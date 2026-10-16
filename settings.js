@@ -138,7 +138,7 @@ function renderScForm() {
       if (at >= 0) S.shortcuts.splice(at, 0, item); else S.shortcuts.push(item);
     } else S.shortcuts = S.shortcuts.map((s) => (s.id === editingSc ? { ...s, ...data } : s));
     editingSc = null;
-    await ov.setShortcuts(S.shortcuts);
+    await ov.setShortcuts(S.shortcuts, scModeId);
     renderShortcuts();
   };
 }
@@ -152,11 +152,11 @@ $("scList").addEventListener("click", async (e) => {
   if (a === "del") S.shortcuts.splice(i, 1);
   if (a === "up" && i > 0) [S.shortcuts[i - 1], S.shortcuts[i]] = [S.shortcuts[i], S.shortcuts[i - 1]];
   if (a === "down" && i < S.shortcuts.length - 1) [S.shortcuts[i + 1], S.shortcuts[i]] = [S.shortcuts[i], S.shortcuts[i + 1]];
-  await ov.setShortcuts(S.shortcuts);
+  await ov.setShortcuts(S.shortcuts, scModeId);
   renderShortcuts();
 });
 $("scAdd").onclick = () => { editingSc = "new"; renderScForm(); };
-$("scReset").onclick = async () => { S.shortcuts = await ov.resetShortcuts(); editingSc = null; renderShortcuts(); };
+$("scReset").onclick = async () => { S.shortcuts = await ov.resetShortcuts(scModeId); editingSc = null; renderShortcuts(); };
 
 // ---------- widgets ----------
 const EXAMPLES = [
@@ -320,11 +320,121 @@ document.addEventListener("keydown", async (e) => {
 // ---------- general ----------
 $("openAtLogin").onchange = () => ov.setSetting("openAtLogin", $("openAtLogin").checked);
 
+// ---------- modes ----------
+let scModeId = null;      // which mode's shortcut buttons the Shortcut buttons page is editing
+let editingMode = null;   // mode id in the edit form, or "new"
+const modeById = (id) => S.modes.find((m) => m.id === id);
+
+// Shortcut buttons page: pick the mode whose buttons you're editing.
+function syncShortcutMode() {
+  if (!scModeId || !modeById(scModeId)) scModeId = S.activeMode;
+  S.shortcuts = modeById(scModeId).shortcuts;
+  $("scMode").innerHTML = S.modes.map((m) => `<option value="${esc(m.id)}" ${m.id === scModeId ? "selected" : ""}>${esc(m.name)}${m.id === S.activeMode ? " (active)" : ""}</option>`).join("");
+}
+$("scMode").onchange = () => { scModeId = $("scMode").value; editingSc = null; syncShortcutMode(); renderShortcuts(); };
+
+const MODE_EXAMPLES = [
+  ["Spanish practice", "Help me practice Spanish: chat with me in simple Spanish, gently correct my grammar, and quiz me on vocabulary."],
+  ["Research", "Help me research topics: find and summarize reliable sources, compare viewpoints, and keep track of key facts."],
+  ["Interview prep", "Help me prepare for job interviews: ask me practice questions, give feedback on my answers, and suggest stronger phrasing."],
+  ["Email", "Help me write and reply to emails: clear, friendly and concise, matching the tone of the thread."],
+];
+$("modeExamples").innerHTML = MODE_EXAMPLES.map(([n], i) => `<button data-i="${i}">${n}</button>`).join("");
+$("modeExamples").addEventListener("click", (e) => { if (e.target.dataset.i) { $("mRequest").value = MODE_EXAMPLES[e.target.dataset.i][1]; $("mRequest").focus(); } });
+
+function renderModes() {
+  $("modeList").innerHTML = S.modes.map((m) => `
+    <div class="item" data-id="${esc(m.id)}">
+      <div class="grow"><div class="t">${esc(m.name)} ${m.id === S.activeMode ? '<span class="tag" style="color:var(--accent)">active</span>' : ""} ${m.builtin ? '<span class="tag">built-in</span>' : ""}</div>
+        <div class="d">${esc(m.description || (m.instructions || "").split("\n")[0] || "No extra instructions.")}</div></div>
+      <div class="acts">
+        ${m.id === S.activeMode ? "" : `<button class="btn ghost" data-a="use">Use</button>`}
+        <button class="icon-btn" data-a="edit" title="Edit">${ICON.edit}</button>
+        <button class="btn ghost" data-a="buttons" title="Edit this mode's shortcut buttons">Buttons</button>
+        ${m.builtin ? `<button class="btn ghost" data-a="restore" title="Put it back the way it came">Restore</button>` : ""}
+        ${m.id === "general" ? "" : `<button class="icon-btn" data-a="del" title="Delete">${ICON.del}</button>`}
+      </div>
+    </div>`).join("");
+  renderModeForm();
+}
+function renderModeForm() {
+  if (!editingMode) { $("modeForm").innerHTML = ""; return; }
+  const m = editingMode === "new" ? { name: "", description: "", instructions: "" } : modeById(editingMode);
+  $("modeForm").innerHTML = `
+    <div class="form">
+      <b>${editingMode === "new" ? "New mode" : `Edit ${esc(m.name)}`}</b>
+      <input type="text" id="mfName" maxlength="24" placeholder="Name, e.g. Spanish" value="${esc(m.name)}">
+      <input type="text" id="mfDesc" maxlength="200" placeholder="What it's for (one line)" value="${esc(m.description || "")}">
+      <textarea id="mfInstr" style="min-height:150px" placeholder="How Claude should behave in this mode: focus, tone, format, what to avoid.">${esc(m.instructions || "")}</textarea>
+      <p class="hint" style="margin:0">Modes can't change your privacy settings or what needs your approval.</p>
+      <div class="btns"><button class="btn primary" id="mfSave">Save</button><button class="btn" id="mfCancel">Cancel</button></div>
+    </div>`;
+  $("mfName").focus();
+  $("mfCancel").onclick = () => { editingMode = null; renderModeForm(); };
+  $("mfSave").onclick = async () => {
+    const name = $("mfName").value.trim();
+    if (!name) return $("mfName").focus();
+    const r = await ov.saveMode({ id: editingMode === "new" ? undefined : editingMode, name, description: $("mfDesc").value.trim(), instructions: $("mfInstr").value });
+    S.modes = r.modes; S.activeMode = r.active;
+    editingMode = null;
+    renderModes(); syncShortcutMode(); renderShortcuts();
+  };
+}
+$("modeList").addEventListener("click", async (e) => {
+  const el = e.target.closest("[data-a]");
+  if (!el) return;
+  const id = el.closest(".item").dataset.id;
+  let r;
+  switch (el.dataset.a) {
+    case "use": await ov.setActiveMode(id); S.activeMode = id; break;
+    case "edit": editingMode = id; return renderModeForm();
+    case "buttons": scModeId = id; syncShortcutMode(); renderShortcuts(); return show("shortcuts");
+    case "restore": r = await ov.restoreMode(id); break;
+    case "del":
+      if (el.dataset.confirm !== "1") { el.dataset.confirm = "1"; el.title = "Click again to delete"; el.style.color = "#ff9b8a"; return; }
+      r = await ov.deleteMode(id); break;
+  }
+  if (r) { S.modes = r.modes; S.activeMode = r.active; }
+  renderModes(); syncShortcutMode(); renderShortcuts();
+});
+$("modeNew").onclick = () => { editingMode = "new"; renderModeForm(); };
+$("mBuild").onclick = async () => {
+  const req = $("mRequest").value.trim();
+  if (!req) return $("mRequest").focus();
+  $("mBuild").disabled = true;
+  $("mStatus").innerHTML = '<span class="spinner"></span>Claude is writing the mode…';
+  const r = await ov.buildMode(req);
+  $("mBuild").disabled = false;
+  if (!r.ok) { $("mStatus").innerHTML = `<span class="err">${esc(r.error)}</span>`; return; }
+  S.modes = r.modes; S.activeMode = r.active;
+  $("mStatus").innerHTML = `<span class="ok">Added "${esc(modeById(r.id).name)}". Click Use to switch to it, or Edit to adjust it.</span>`;
+  $("mRequest").value = "";
+  renderModes(); syncShortcutMode();
+};
+ov.onModeChanged((m) => { if (!S) return; S.activeMode = m.id; renderModes(); syncShortcutMode(); renderShortcuts(); });
+
+// ---------- extra toggles ----------
+$("notesSync").onchange = () => ov.setSetting("notesSync", $("notesSync").checked);
+$("pShowMode").onchange = () => savePill({ showMode: $("pShowMode").checked });
+
+// ---------- sign-in ----------
+function renderAuth() {
+  const a = S.auth || {};
+  $("authTitle").textContent = a.mode === "apiKey" ? "Anthropic API key" : "Claude subscription (Pro or Max)";
+  $("authDesc").textContent = !a.claudeInstalled ? "Claude Code isn't installed yet. Open the setup guide to install it."
+    : a.mode === "apiKey" ? `Using your API key ${a.keyHint || ""}. You pay Anthropic per use.` : "Using your Claude account's sign-in in Claude Code.";
+}
+$("authChange").onclick = () => ov.openWelcome("connect");
+$("rerunSetup").onclick = () => ov.openWelcome("welcome");
+
 // ---------- load ----------
 async function refresh() {
   S = await ov.getSettings();
-  renderAppearance(); renderTop(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys();
+  syncShortcutMode();
+  renderAppearance(); renderTop(); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
   $("openAtLogin").checked = S.openAtLogin;
+  $("notesSync").checked = S.notesSync;
+  $("pShowMode").checked = S.pill.showMode !== false;
   $("version").textContent = `overclaude ${S.version}`;
 }
 show("appearance");

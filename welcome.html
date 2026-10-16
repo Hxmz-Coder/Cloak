@@ -1,0 +1,181 @@
+<!doctype html>
+<html data-opaque>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<title>Claude Welcome</title>
+<link rel="stylesheet" href="theme.css" />
+<link rel="stylesheet" href="panel.css" />
+<style>
+  .badge { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: var(--on-accent); font-weight: 700; font-size: 12px; }
+  .wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .steps { display: flex; gap: 6px; padding: 14px 28px 0; }
+  .steps i { flex: 1; height: 3px; border-radius: 3px; background: var(--border); }
+  .steps i.on { background: var(--accent); }
+  .page { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 10px 28px 10px; user-select: text; }
+  .page.on { display: block; }
+  h1 { font-size: 22px; margin: 16px 0 4px; font-weight: 650; }
+  h2 { font-size: 15px; margin: 18px 0 6px; font-weight: 600; }
+  p { color: var(--muted); margin: 6px 0; line-height: 1.55; }
+  .hero { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+  .hero .logo { width: 46px; height: 46px; font-size: 22px; }
+  .bul { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .bul li { display: flex; gap: 10px; align-items: flex-start; color: var(--text); }
+  .bul li i { width: 8px; height: 8px; margin-top: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .bul li span { color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .chip { padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; font-size: 13px; color: var(--muted); }
+  .chip.on { border-color: var(--accent); color: var(--text); background: rgba(var(--accent-rgb), .12); }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+  .card { text-align: left; padding: 14px; border-radius: 13px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; color: var(--text); }
+  .card:hover { background: var(--panel-hi); }
+  .card.on { border-color: var(--accent); background: rgba(var(--accent-rgb), .1); }
+  .card b { display: block; font-size: 14px; margin-bottom: 3px; }
+  .card span { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+  .card .rec { float: right; font-size: 10.5px; color: var(--accent); font-weight: 600; }
+  .stepbox { margin-top: 12px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.02); }
+  .stepbox .head { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .num { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; background: var(--panel-hi); flex-shrink: 0; }
+  .num.ok { background: var(--ok); color: #142014; }
+  .stepbox .body { margin: 8px 0 0 32px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  code { font-family: Consolas, monospace; font-size: 12px; background: rgba(0,0,0,.35); padding: 3px 7px; border-radius: 6px; user-select: all; }
+  .status { font-size: 12.5px; color: var(--muted); }
+  .status.ok { color: var(--ok); } .status.err { color: #ff9b8a; }
+  input[type=password], input[type=text] { width: 100%; }
+  a { color: var(--accent); cursor: pointer; }
+  .tips { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+  .tip { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); }
+  .tip b { display: block; margin-bottom: 3px; }
+  .tip span { color: var(--muted); font-size: 12.5px; line-height: 1.45; display: block; }
+  .tip .btn { margin-top: 8px; padding: 4px 10px; font-size: 12px; }
+  kbd { font-family: inherit; font-size: 11.5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: rgba(255,255,255,.04); color: var(--text); white-space: nowrap; }
+  .foot { display: flex; align-items: center; gap: 8px; padding: 12px 28px 16px; border-top: 1px solid var(--border); flex-shrink: 0; }
+  .foot .skip { margin-right: auto; }
+  .spinner { display: inline-block; vertical-align: -2px; width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(var(--accent-rgb), .25); border-top-color: var(--accent); animation: spin .9s linear infinite; margin-right: 6px; }
+</style>
+</head>
+<body data-fixed>
+<div class="shell">
+  <div class="phead" title="Drag to move">
+    <div class="badge">✳</div>
+    <div class="title">Welcome to overclaude</div>
+    <button class="icon-btn min" title="Close (you can reopen this from Settings > General)">
+      <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="wrap">
+    <div class="steps" id="dots"></div>
+
+    <!-- 1. Welcome -->
+    <section class="page" data-step="welcome">
+      <div class="hero"><div class="logo">✳</div><div><h1 style="margin:0">Claude, on top of everything you do</h1>
+        <p style="margin:2px 0 0">A few quick steps and you're set. It takes about two minutes.</p></div></div>
+      <ul class="bul">
+        <li><i></i><div>A small widget at the top of your screen. <span>Hover it to chat with Claude, ask about your screen, or use one-click shortcuts.</span></div></li>
+        <li><i></i><div>Tasks, notes and a calendar. <span>Claude keeps your to-do list up to date from your notes and what you're working on.</span></div></li>
+        <li><i></i><div>Modes for what you're doing. <span>Homework, Practice, Writing, Coding, or ones you make yourself.</span></div></li>
+        <li><i></i><div>You stay in control. <span>Claude asks before changing anything on your PC, and your data stays on this computer.</span></div></li>
+      </ul>
+    </section>
+
+    <!-- 2. About you -->
+    <section class="page" data-step="about">
+      <h1>Tell us a little about you</h1>
+      <p>This picks good starting settings. You can change everything later.</p>
+      <h2>What should Claude call you? <span style="color:var(--faint);font-weight:400">(optional)</span></h2>
+      <input type="text" id="name" maxlength="40" placeholder="Your first name" />
+      <h2>What will you use overclaude for?</h2>
+      <div class="chips" id="interests">
+        <button class="chip" data-v="school">School and homework</button>
+        <button class="chip" data-v="study">Studying and practice</button>
+        <button class="chip" data-v="writing">Writing</button>
+        <button class="chip" data-v="coding">Coding</button>
+        <button class="chip" data-v="work">Work and email</button>
+        <button class="chip" data-v="planning">Planning my day</button>
+      </div>
+    </section>
+
+    <!-- 3. Connect Claude -->
+    <section class="page" data-step="connect">
+      <h1>Connect Claude</h1>
+      <p>overclaude runs Claude through Claude Code, Anthropic's official app. Choose how you'd like to use it.</p>
+      <div class="cards" id="methods">
+        <button class="card" data-v="subscription"><span class="rec">RECOMMENDED</span><b>Claude Pro or Max</b><span>Use your Claude subscription. No extra cost and nothing to manage.</span></button>
+        <button class="card" data-v="apiKey"><b>Anthropic API key</b><span>Pay Anthropic per use with a key from the Claude Console. Good if you don't have Pro or Max.</span></button>
+      </div>
+
+      <div class="stepbox">
+        <div class="head"><div class="num" id="n1">1</div>Install Claude Code</div>
+        <div class="body">
+          <div class="status" id="installStatus"><span class="spinner"></span>Checking…</div>
+          <div class="row" id="installActions" style="display:none">
+            <button class="btn primary" id="installBtn">Install Claude Code</button>
+            <button class="btn" id="recheckBtn">Check again</button>
+          </div>
+          <p id="installHelp" style="display:none;font-size:12px">This opens a PowerShell window and runs Anthropic's official installer. Or run it yourself: <code>irm https://claude.ai/install.ps1 | iex</code></p>
+        </div>
+      </div>
+
+      <div class="stepbox" id="subBox">
+        <div class="head"><div class="num" id="n2">2</div>Sign in with your Claude account</div>
+        <div class="body">
+          <p style="margin-top:0">Click <b>Open sign-in</b>. In the window that opens, type <code>/login</code>, choose your <b>Claude account (Pro or Max)</b>, and finish in your browser. Then type <code>/exit</code> and come back here.</p>
+          <div class="row"><button class="btn primary" id="loginBtn">Open sign-in</button><button class="btn" id="testSubBtn">Test connection</button><span class="status" id="subStatus"></span></div>
+        </div>
+      </div>
+
+      <div class="stepbox" id="keyBox" style="display:none">
+        <div class="head"><div class="num" id="n2k">2</div>Add your API key</div>
+        <div class="body">
+          <p style="margin-top:0">Create a key at <a id="consoleLink">console.anthropic.com</a> (Settings, then API keys) and paste it here. It's stored encrypted on this PC and only used to run Claude.</p>
+          <input type="password" id="apiKey" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+          <div class="row"><button class="btn primary" id="saveKeyBtn">Save and test</button><span class="status" id="keyStatus"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Mode -->
+    <section class="page" data-step="mode">
+      <h1>Pick a starting mode</h1>
+      <p>A mode changes how Claude helps and which shortcut buttons you see. Switch anytime from the chat bar, or by right-clicking the top widget.</p>
+      <div class="cards" id="modeCards"></div>
+    </section>
+
+    <!-- 5. Tour -->
+    <section class="page" data-step="tour">
+      <h1>Quick tour</h1>
+      <p>The essentials. Try any of them now.</p>
+      <div class="tips">
+        <div class="tip"><b>Chat</b><span>Hover the widget at the top of your screen, or press <kbd id="kToggle">Ctrl+Shift+Space</kbd>. Replies stream in as Claude writes.</span><button class="btn" data-tour="bar">Show me</button></div>
+        <div class="tip"><b>Ask about your screen</b><span>Press <kbd id="kCapture">Ctrl+Shift+S</kbd>, or use a shortcut button like "Explain my screen".</span></div>
+        <div class="tip"><b>Tasks and Notes</b><span>Write to-dos in Notes and they appear in Tasks. Drag panels anywhere and resize them from any edge.</span><button class="btn" data-tour="panels">Show me</button></div>
+        <div class="tip"><b>What did I just do?</b><span>Lost focus? One click recaps the last half hour and where you left off.</span></div>
+        <div class="tip"><b>You approve changes</b><span>Claude reads and searches on its own, but asks before changing anything. Tick "Always allow" for things you trust.</span></div>
+        <div class="tip"><b>Make it yours</b><span>In Settings: colors, the top widget, modes, shortcut buttons, and widgets Claude builds for you, like a calendar.</span><button class="btn" data-tour="settings">Open Settings</button></div>
+      </div>
+    </section>
+
+    <!-- 6. Done -->
+    <section class="page" data-step="done">
+      <div class="hero"><div class="logo">✳</div><div><h1 style="margin:0" id="doneTitle">You're all set</h1>
+        <p style="margin:2px 0 0" id="doneSub">overclaude is ready.</p></div></div>
+      <ul class="bul">
+        <li><i></i><div>Hover the top widget to chat. <span>Or press <kbd id="kToggle2">Ctrl+Shift+Space</kbd> to bring everything up.</span></div></li>
+        <li><i></i><div>Right-click the top widget to switch modes.</div></li>
+        <li><i></i><div>Need this again? <span>Settings, then General, then Setup guide.</span></div></li>
+      </ul>
+      <p class="status err" id="doneWarn" style="display:none;margin-top:14px"></p>
+    </section>
+
+    <div class="foot">
+      <button class="btn ghost skip" id="skipBtn">Skip setup</button>
+      <button class="btn" id="backBtn">Back</button>
+      <button class="btn primary" id="nextBtn">Get started</button>
+    </div>
+  </div>
+</div>
+<script src="theme.js"></script>
+<script src="panel.js"></script>
+<script src="welcome.js"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
   "name": "overclaude",
   "productName": "overclaude",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A customizable Claude overlay for your Windows desktop: chat bar, tasks, notes, screen memory, and widgets Claude builds for you.",
   "main": "main.js",
   "scripts": {

@@ -107,23 +107,65 @@ function pillExtrasHtml(cfg) {
   if (cfg.clock) parts.push(`<span>${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`);
   return parts.join('<span style="opacity:.4">·</span>');
 }
+// Live alerts: something happening right now. A task due now (from your list) or a widget saying so
+// (e.g. the calendar: "Now: Dentist"). These are the only things, besides chat activity, that replace
+// what you chose to show on the pill.
+const widgetAlerts = {}; // widget id -> { text, until }
+function currentAlert() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const mins = now.getHours() * 60 + now.getMinutes();
+  for (const t of taskCache) {
+    if (t.done || t.due !== today || !t.time) continue;
+    const [h, m] = t.time.split(":").map(Number);
+    const diff = h * 60 + m - mins;
+    if (diff <= 5 && diff > 0) return `In ${diff} min: ${t.title}`;
+    if (diff <= 0 && diff > -15) return `Now: ${t.title}`;
+  }
+  for (const [id, a] of Object.entries(widgetAlerts)) {
+    if (a.until > Date.now()) return a.text;
+    delete widgetAlerts[id];
+  }
+  return "";
+}
 function updateStatus() {
   const s = $("status");
   const news = body.classList.contains("news");
+  const unread = body.classList.contains("unread");
+  const alert = !busy && !unread && !news ? currentAlert() : "";
   body.classList.toggle("dot-style", pillCfg.style === "dot");
+  body.classList.toggle("alert", !!alert);
   if (busy) s.innerHTML = "Working…";
-  else if (body.classList.contains("unread")) s.innerHTML = "Answer ready";
-  else if (body.classList.contains("away")) s.innerHTML = "Welcome back <small>recap?</small>";
+  else if (unread) s.innerHTML = "Answer ready";
   else if (news) s.innerHTML = esc(body.dataset.news || "");
+  else if (alert) s.innerHTML = esc(alert);
   else s.innerHTML = esc(pillCfg.label ?? "Claude");
-  // Temporary messages replace your chosen extras so the pill stays small.
-  const plain = !busy && !news && !body.classList.contains("unread") && !body.classList.contains("away");
+  // Otherwise it's exactly what you chose in Settings > Top widget.
+  const plain = !busy && !unread && !news && !alert;
   $("pillExtra").innerHTML = plain ? pillExtrasHtml(pillCfg) : "";
-  const dotShown = body.classList.contains("unread") || body.classList.contains("away") || news;
-  $("pillInfo").classList.toggle("blank", !s.innerHTML && !$("pillExtra").innerHTML && !dotShown);
+  $("pillMode").textContent = plain && pillCfg.showMode !== false && activeModeInfo.id !== "general" ? activeModeInfo.name : "";
+  const dotShown = unread || news || !!alert;
+  $("pillInfo").classList.toggle("blank", !s.innerHTML && !$("pillExtra").innerHTML && !$("pillMode").textContent && !dotShown);
   if (mode === "pill") requestAnimationFrame(fit);
 }
-setInterval(() => { if (pillCfg.clock || pillCfg.date) updateStatus(); }, 15_000);
+setInterval(updateStatus, 15_000); // keeps the time, date and "due now" alerts current
+window.overlay.onPillAlert(({ id, text, minutes }) => {
+  if (text) widgetAlerts[id] = { text, until: Date.now() + minutes * 60_000 };
+  else delete widgetAlerts[id];
+  updateStatus();
+});
+
+// ---------- modes ----------
+let activeModeInfo = { id: "general", name: "General" };
+function showMode(m) {
+  activeModeInfo = { id: m.id, name: m.name };
+  $("modeName").textContent = m.name;
+  if (m.shortcuts) { shortcuts = m.shortcuts; renderTiles(); }
+  updateStatus();
+}
+window.overlay.onModeChanged(showMode);
+$("modeBtn").onclick = () => window.overlay.modesMenu();
 
 window.overlay.onTasksChanged((list) => { taskCache = list; updateStatus(); });
 window.overlay.onWidgetStatus(({ id, text }) => { widgetStatus[id] = text; updateStatus(); });
@@ -135,24 +177,22 @@ window.overlay.onTasksAdded((n) => {
   newsTimer = setTimeout(() => { body.classList.remove("news"); updateStatus(); }, 10_000);
 });
 
-// Settings: the sliders button, or right-click the small widget.
+// Settings: the sliders button. Right-click the small widget to switch modes (the menu also has Settings).
 $("settingsBtn").onclick = () => window.overlay.openSettings();
-$("shell").addEventListener("contextmenu", (e) => { if (mode === "pill") { e.preventDefault(); window.overlay.openSettings("top"); } });
+$("shell").addEventListener("contextmenu", (e) => { if (mode === "pill") { e.preventDefault(); window.overlay.modesMenu(); } });
 window.overlay.onPillChanged((p) => { pillCfg = p; updateStatus(); sendSize(); });
 window.overlay.onShortcutsChanged((list) => { shortcuts = list; renderTiles(); });
 
-// After you've been away, offer a recap for a while.
+// After you've been away, highlight "What did I just do?" in the bar for a while (the pill doesn't change).
 window.overlay.onWelcomeBack(() => {
   body.classList.add("away");
   document.querySelector('.tile[data-action="recap"]')?.classList.add("suggest");
-  updateStatus();
   clearTimeout(awayTimer);
   awayTimer = setTimeout(clearAway, 10 * 60_000);
 });
 function clearAway() {
   body.classList.remove("away");
   document.querySelectorAll(".tile.suggest").forEach((t) => t.classList.remove("suggest"));
-  updateStatus();
 }
 
 // ---------- widget buttons (Tasks, Notes, and widgets Claude built) ----------
@@ -340,13 +380,16 @@ $("shotBtn").onclick = async () => { const s = await capture(); if (s) setShot(s
 $("hideBtn").onclick = () => { setPinned(false); setMode("pill"); window.overlay.hideWidget(); };
 $("clearShot").onclick = () => setShot(null);
 $("pinBtn").onclick = () => setPinned(!pinned);
-$("newChat").onclick = async () => {
+// New chat: the + in the header, or the link above the conversation.
+async function newChat() {
   if (busy) return;
   await window.overlay.reset();
   log.innerHTML = "";
   setMode("bar");
   input.focus();
-};
+}
+$("newChat").onclick = newChat;
+$("newChatBtn").onclick = newChat;
 window.overlay.onTriggerCapture(async () => {
   const s = await capture();
   if (s) setShot(s);
@@ -452,6 +495,8 @@ $("edReset").onclick = async () => {
 (async () => {
   const cfg = await window.overlay.getConfig();
   shortcuts = cfg.shortcuts;
+  activeModeInfo = cfg.mode || activeModeInfo;
+  $("modeName").textContent = activeModeInfo.name;
   pillCfg = cfg.pill;
   widgetStatus = cfg.widgetStatus || {};
   taskCache = await window.overlay.listTasks();

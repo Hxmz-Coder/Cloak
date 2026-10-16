@@ -18,8 +18,8 @@ contextBridge.exposeInMainWorld("overlay", {
   writeClipboard: (t) => ipcRenderer.send("write-clipboard", t),
   getConfig: () => ipcRenderer.invoke("get-config"),
   setPill: (p) => ipcRenderer.invoke("set-pill", p),
-  setShortcuts: (s) => ipcRenderer.invoke("set-shortcuts", s),
-  resetShortcuts: () => ipcRenderer.invoke("reset-shortcuts"),
+  setShortcuts: (s, modeId) => ipcRenderer.invoke("set-shortcuts", s, modeId),
+  resetShortcuts: (modeId) => ipcRenderer.invoke("reset-shortcuts", modeId),
   onCollapse: on("collapse"),
   onOpenBar: on("open-bar"),
   onBlur: on("blurred"),
@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("overlay", {
   onChatEvent: on("chat-event"),
   chatHistory: () => ipcRenderer.invoke("chat-history"),
   onWidgetStatus: on("widget-status"),
+  onPillAlert: on("pill-alert"),
   onPanelsChanged: on("panels-changed"),
   widgetsMenu: () => ipcRenderer.send("widgets-menu"),
   toggleAllPanels: () => ipcRenderer.send("toggle-all-panels"),
@@ -39,6 +40,7 @@ contextBridge.exposeInMainWorld("overlay", {
   hidePanel: () => ipcRenderer.send("hide-panel"),
   focusPanel: () => ipcRenderer.send("focus-panel"),
   resizePanel: (w, h) => ipcRenderer.send("panel-resize", w, h),
+  setPanelBounds: (b) => ipcRenderer.send("panel-set-bounds", b),
   onPanelShown: on("panel-shown"),
 
   // tasks
@@ -55,6 +57,30 @@ contextBridge.exposeInMainWorld("overlay", {
   // notes
   getNotes: () => ipcRenderer.invoke("notes-get"),
   setNotes: (text) => ipcRenderer.invoke("notes-set", text),
+  syncNotesNow: () => ipcRenderer.invoke("notes-sync-now"),
+  onNotesSync: on("notes-sync"),
+
+  // modes
+  getModes: () => ipcRenderer.invoke("get-modes"),
+  setActiveMode: (id) => ipcRenderer.invoke("set-active-mode", id),
+  modesMenu: () => ipcRenderer.send("modes-menu"),
+  saveMode: (m) => ipcRenderer.invoke("save-mode", m),
+  deleteMode: (id) => ipcRenderer.invoke("delete-mode", id),
+  restoreMode: (id) => ipcRenderer.invoke("restore-mode", id),
+  buildMode: (request) => ipcRenderer.invoke("build-mode", request),
+  onModeChanged: on("mode-changed"),
+
+  // sign-in and setup
+  authStatus: () => ipcRenderer.invoke("auth-status"),
+  setAuth: (a) => ipcRenderer.invoke("auth-set", a),
+  testAuth: () => ipcRenderer.invoke("auth-test"),
+  installClaude: () => ipcRenderer.send("install-claude"),
+  openClaudeLogin: () => ipcRenderer.send("open-claude-login"),
+  openExternal: (url) => ipcRenderer.send("open-external", url),
+  openWelcome: (step) => ipcRenderer.send("open-welcome", step),
+  onWelcomeStep: on("welcome-step"),
+  welcomeDone: (payload) => ipcRenderer.invoke("welcome-done", payload),
+  tour: (what) => ipcRenderer.send("tour", what),
 
   // theme (every window)
   getTheme: () => ipcRenderer.invoke("get-theme"),

@@ -23,7 +23,8 @@
     root.setProperty("--accent-2", `rgb(${mix(rgb, [255, 255, 255], 0.3).join(",")})`);
     // Dark text on light accents, light text on dark ones.
     root.setProperty("--on-accent", luminance(rgb) > 0.28 ? "#1a1210" : "#ffffff");
-    const a = Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
+    // Some windows (Settings, Welcome) are always fully opaque so they stay easy to read.
+    const a = document.documentElement.hasAttribute("data-opaque") ? 1 : Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
     root.setProperty("--bg-alpha", String(a));
   }
 
