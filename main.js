@@ -3,7 +3,8 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { pathToFileURL } = require("url");
-const { runClaude, killProc, friendlyError } = require("./lib/claude");
+const { runClaude, friendlyError } = require("./lib/claude");
+const { ChatSession } = require("./lib/chat");
 const { TOOLS, AUTO_ALLOWED, describeDenial } = require("./lib/permissions");
 const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
@@ -11,6 +12,22 @@ const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widge
 
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+
+// Data lives in %APPDATA%\overclaude. Earlier versions (named "claude-overlay") used %APPDATA%\claude-overlay;
+// move that over once so tasks, notes, settings and widgets carry across the rename.
+app.setName("overclaude");
+// OVERCLAUDE_DATA_DIR points it at a different folder instead (e.g. a test or portable profile).
+(() => {
+  const custom = process.env.OVERCLAUDE_DATA_DIR;
+  const dir = custom || path.join(app.getPath("appData"), "overclaude");
+  const old = path.join(app.getPath("appData"), "claude-overlay");
+  if (!custom && !fs.existsSync(dir) && fs.existsSync(old)) {
+    try {
+      fs.cpSync(old, dir, { recursive: true, filter: (src) => !/[\\/](Cache|Code Cache|GPUCache|DawnCache|DawnGraphiteCache|Crashpad|blob_storage)([\\/]|$)/i.test(src) });
+    } catch {}
+  }
+  app.setPath("userData", dir);
+})();
 
 // Only one copy runs at a time; starting it again just opens the one that's already running.
 if (!app.requestSingleInstanceLock()) app.exit(0);
@@ -57,7 +74,7 @@ const DEFAULT_SHORTCUTS = [
   { id: "code", label: "Explain code", prompt: "Explain this code clearly and point out any bugs:\n\n{clipboard}", screenshot: false, autoSend: true },
   { id: "scan", label: "Find tasks", action: "scan" },
 ];
-const DEFAULT_PILL = { label: "Claude", clock: false, taskCount: false, nextTask: false, position: "center" };
+const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], position: "center" };
 
 const AUTO_SCAN_EVERY_MS = 40 * 60_000;
 
@@ -66,9 +83,8 @@ const panels = {};     // name -> BrowserWindow
 let memory, tasks, widgets;
 let building = false;
 const widgetIdBySender = new Map(); // webContents id -> custom widget id
-let sessionId = null;  // Claude Code session for the current chat; null = next message starts a new one
-let chatProc = null;   // the running chat `claude` process, if any
-let stopped = false;
+const widgetStatus = {};            // custom widget id -> status line it offers the pill
+let chat;             // the chat bar's always-running Claude (lib/chat.js)
 let capturing = false;
 let scanning = false;
 let pendingApprovals = new Map(); // id -> approval card from the last reply
@@ -112,7 +128,7 @@ const readNotes = () => { try { return fs.readFileSync(notesPath(), "utf8"); } c
 function placeWidget(mode, size) {
   let [w, h] = WIDGET[mode] || WIDGET.pill;
   if (mode === "bar" && size) h = Math.min(size, 360);
-  if (mode === "pill" && size) w = Math.max(90, Math.min(size, 560));
+  if (mode === "pill" && size) w = Math.max(56, Math.min(size, 560));
   const { workArea } = screen.getPrimaryDisplay();
   const pos = loadConfig().pill.position;
   const x = pos === "left" ? workArea.x + 12 : pos === "right" ? workArea.x + workArea.width - w - 12 : workArea.x + (workArea.width - w) / 2;
@@ -121,7 +137,7 @@ function placeWidget(mode, size) {
 
 function makeWindow(file, size) {
   const win = new BrowserWindow({
-    width: size[0], height: size[1], frame: false, transparent: true, resizable: true,
+    width: size[0], height: size[1], frame: false, transparent: true, resizable: false, // no native resize edge; panels resize from their own grip
     alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true },
   });
@@ -135,7 +151,7 @@ function makeWindow(file, size) {
 // Custom widgets: sandboxed (no Node.js), separate session with no network, only the overlay:// pages.
 function makeWidgetWindow(id, size) {
   const win = new BrowserWindow({
-    width: size[0], height: size[1], frame: false, transparent: true, resizable: true,
+    width: size[0], height: size[1], frame: false, transparent: true, resizable: false, // no native resize edge; panels resize from their own grip
     alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false,
     webPreferences: { preload: path.join(__dirname, "widget-preload.js"), contextIsolation: true, sandbox: true, partition: "persist:widgets" },
   });
@@ -222,6 +238,13 @@ function destroyPanel(name) {
   widgetIdBySender.delete(win.webContents.id);
   win.destroy();
   delete panels[name];
+  notifyPanels();
+}
+// Keeps the widget buttons in the chat bar in sync (which widgets exist, which are open).
+let notifyTimer;
+function notifyPanels() {
+  clearTimeout(notifyTimer);
+  notifyTimer = setTimeout(() => widget?.webContents.send("panels-changed", panelList()), 50);
 }
 // Panels that Ctrl+Shift+Space brings up: Tasks, Notes and your custom widgets, unless you turned one off.
 const hotkeyPanels = () => Object.keys(panels).filter((n) => !panelSpec(n)?.standalone && loadConfig().panelEnabled[n] !== false);
@@ -232,8 +255,9 @@ function showPanel(name, focus) {
   w.setBounds(savedBounds(name));
   if (focus) { w.show(); w.focus(); } else w.showInactive();
   w.webContents.send("panel-shown");
+  notifyPanels();
 }
-function hidePanel(name) { panels[name]?.hide(); }
+function hidePanel(name) { panels[name]?.hide(); notifyPanels(); }
 function togglePanel(name) { panels[name]?.isVisible() ? hidePanel(name) : showPanel(name); }
 
 // Ctrl+Shift+Space: bring everything up (including anything you minimized), or put it all away.
@@ -286,38 +310,65 @@ function clearChatScreenshots() {
 }
 
 // ---------- chat with Claude ----------
-async function chatTurn(prompt, extraAllowed = []) {
+// Speed presets for chat (Settings > Claude & privacy).
+const CHAT_SPEEDS = {
+  fast: { model: "haiku", effort: "low" },
+  balanced: { model: "sonnet", effort: "low" },
+  smart: { model: "opus", effort: "medium" },
+};
+function chatOptions() {
   const cfg = loadConfig();
+  return {
+    cwd: workDir(),
+    tools: TOOLS,
+    allowedTools: [...AUTO_ALLOWED, ...cfg.autoAllow],
+    addDirs: [os.homedir()],
+    systemPromptFile: path.join(workDir(), "system-prompt.txt"),
+    ...(CHAT_SPEEDS[cfg.chatSpeed] || CHAT_SPEEDS.balanced),
+  };
+}
+
+// What Claude is doing, shown under the reply while it works.
+const TOOL_LABELS = {
+  Read: "Reading a file", Glob: "Looking through files", Grep: "Searching files", WebSearch: "Searching the web",
+  WebFetch: "Opening a web page", Bash: "Running a command", Edit: "Editing a file", Write: "Writing a file",
+};
+
+// The conversation shown in the chat bar, kept across restarts.
+const chatHistoryPath = () => path.join(userData(), "chat.json");
+function loadHistory() {
+  try { return JSON.parse(fs.readFileSync(chatHistoryPath(), "utf8")); } catch { return { sessionId: null, messages: [] }; }
+}
+function saveHistory(messages) {
+  fs.writeFileSync(chatHistoryPath(), JSON.stringify({ sessionId: chat.sessionId, messages: messages.slice(-200) }));
+}
+
+// display: what to show as your message in the chat (null for follow-ups like approvals).
+async function chatTurn(prompt, { display = null, image = false, extraAllowed = [] } = {}) {
   const context = `[Widget context. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}]` +
     (declinedNote ? `\n[Widget: ${declinedNote}]` : "");
   declinedNote = "";
   const full = `${context}\n\n${prompt}`;
-  const opts = {
-    cwd: workDir(),
-    tools: TOOLS,
-    allowedTools: [...AUTO_ALLOWED, ...cfg.autoAllow, ...extraAllowed],
-    addDirs: [os.homedir()],
-    systemPromptFile: path.join(workDir(), "system-prompt.txt"),
-  };
+  const history = loadHistory().messages;
+  if (display !== null) history.push({ role: "user", text: display, image, time: Date.now() });
+  saveHistory(history);
 
-  stopped = false;
-  let run = runClaude({ ...opts, prompt: full, resume: sessionId });
-  chatProc = run.proc;
-  let res = await run.done;
-  // If the saved session can't be resumed (e.g. it was deleted), start a fresh chat instead of failing.
+  const onEvent = (ev) => {
+    if (ev.type === "tool") ev.label = TOOL_LABELS[ev.name] || `Using ${ev.name}`;
+    widget?.webContents.send("chat-event", ev);
+  };
+  let res = await chat.send(full, { onEvent, extraAllowed });
+  // If the saved conversation can't be resumed (e.g. it was deleted), start a fresh one instead of failing.
   const failText = res.error || (res.json?.is_error ? res.json.result : "");
-  if (sessionId && !stopped && /no conversation found/i.test(failText || "")) {
-    sessionId = null;
-    run = runClaude({ ...opts, prompt: full, resume: null });
-    chatProc = run.proc;
-    res = await run.done;
+  if (/no conversation found/i.test(failText || "")) {
+    chat.sessionId = null;
+    chat.kill();
+    res = await chat.send(full, { onEvent, extraAllowed });
   }
-  chatProc = null;
-  if (stopped) return { ok: true, stopped: true };
+  if (res.stopped) return { ok: true, stopped: true };
   if (res.error) return { ok: false, error: friendlyError(res.error) };
 
   const { json } = res;
-  if (json.session_id) sessionId = json.session_id;
   if (json.is_error) return { ok: false, error: friendlyError(json.result || `Claude Code returned an error (${json.subtype}).`) };
 
   let text = json.result || "";
@@ -329,7 +380,10 @@ async function chatTurn(prompt, extraAllowed = []) {
   pendingApprovals = new Map();
   const approvals = (json.permission_denials || []).map(describeDenial);
   for (const a of approvals) pendingApprovals.set(a.id, a);
-  return { ok: true, text: approvals.length ? tidyBlockedText(cleaned) : cleaned, approvals, tasksAdded: added.map((t) => t.title) };
+  const shown = approvals.length ? tidyBlockedText(cleaned) : cleaned;
+  history.push({ role: "bot", text: shown, time: Date.now() });
+  saveHistory(history);
+  return { ok: true, text: shown, approvals, tasksAdded: added.map((t) => t.title) };
 }
 
 // The CLI tells Claude "no prompt could be shown", and Claude tends to repeat that. The widget's Allow
@@ -456,7 +510,26 @@ ipcMain.handle("read-clipboard", () => clipboard.readText());
 ipcMain.on("write-clipboard", (_e, text) => clipboard.writeText(text));
 ipcMain.handle("get-config", () => {
   const cfg = loadConfig();
-  return { shortcuts: getShortcuts(), memoryEnabled: cfg.memoryEnabled, pill: cfg.pill };
+  return { shortcuts: getShortcuts(), memoryEnabled: cfg.memoryEnabled, pill: cfg.pill, widgetStatus, panels: panelList() };
+});
+
+// Folder button: every widget in a menu, plus open/hide all.
+ipcMain.on("widgets-menu", () => {
+  const list = panelList();
+  Menu.buildFromTemplate([
+    ...list.map((p) => ({ label: p.label, type: "checkbox", checked: p.visible, click: () => togglePanel(p.name) })),
+    { type: "separator" },
+    { label: "Open all", click: () => list.forEach((p) => showPanel(p.name)) },
+    { label: "Hide all", click: () => list.forEach((p) => hidePanel(p.name)) },
+    { type: "separator" },
+    { label: "Manage widgets…", click: () => openSettings("widgets") },
+  ]).popup({ window: widget });
+});
+// Open-all button: shows every widget, or hides them all if any are open. The chat bar stays as it is.
+ipcMain.on("toggle-all-panels", () => {
+  const list = panelList();
+  if (list.some((p) => p.visible)) list.forEach((p) => hidePanel(p.name));
+  else list.forEach((p) => showPanel(p.name));
 });
 ipcMain.handle("set-pill", (_e, pill) => {
   saveConfig({ pill: { ...DEFAULT_PILL, ...pill } });
@@ -487,15 +560,16 @@ ipcMain.handle("get-settings", () => {
   const cfg = loadConfig();
   return {
     theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys,
-    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, autoAllow: cfg.autoAllow,
+    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced",
     openAtLogin: app.getLoginItemSettings(loginItemArgs()).openAtLogin,
-    panels: panelList(), building,
+    panels: panelList(), building, version: app.getVersion(),
   };
 });
 // Simple on/off and list settings.
 ipcMain.handle("set-setting", (_e, key, value) => {
   if (key === "memoryEnabled" || key === "autoScan") saveConfig({ [key]: !!value });
-  else if (key === "autoAllow" && Array.isArray(value)) saveConfig({ autoAllow: value.map(String) });
+  else if (key === "autoAllow" && Array.isArray(value)) { saveConfig({ autoAllow: value.map(String) }); chat.warm(); }
+  else if (key === "chatSpeed" && CHAT_SPEEDS[value]) { saveConfig({ chatSpeed: value }); chat.warm(); }
   else if (key === "openAtLogin") app.setLoginItemSettings({ ...loginItemArgs(), openAtLogin: !!value });
   else return false;
   buildTray();
@@ -533,6 +607,7 @@ function panelList() {
 }
 ipcMain.handle("panel-enabled", (_e, name, on) => {
   saveConfig({ panelEnabled: { ...loadConfig().panelEnabled, [name]: !!on } });
+  notifyPanels();
   return panelList();
 });
 ipcMain.handle("panel-show", (_e, name) => { showPanel(name); return panelList(); });
@@ -545,7 +620,9 @@ ipcMain.handle("widget-delete", (_e, id) => {
   const cfg = loadConfig();
   const { [id]: _b, ...bounds } = cfg.panelBounds;
   const { [id]: _en, ...enabled } = cfg.panelEnabled;
-  saveConfig({ panelBounds: bounds, panelEnabled: enabled });
+  saveConfig({ panelBounds: bounds, panelEnabled: enabled, pill: { ...cfg.pill, widgets: (cfg.pill.widgets || []).filter((w) => w !== id) } });
+  delete widgetStatus[id];
+  broadcast("pill-changed", loadConfig().pill);
   return panelList();
 });
 ipcMain.handle("widget-undo", (_e, id) => {
@@ -603,6 +680,13 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
     case "tasks.update": tasks.update(String(args[0]), args[1] || {}); return true;
     case "tasks.remove": tasks.remove(String(args[0])); return true;
     case "notes.get": return readNotes();
+    case "pill.setStatus": {
+      // A short line the widget offers for the top pill (shown if you pick it in Settings > Top widget).
+      const text = args[0] == null ? "" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 60);
+      widgetStatus[id] = text;
+      widget?.webContents.send("widget-status", { id, text });
+      return true;
+    }
     case "ask": {
       // Keep a misbehaving widget from burning through your usage.
       const recent = (askLog.get(id) || []).filter((t) => t > Date.now() - 3600_000);
@@ -623,13 +707,15 @@ ipcMain.on("widget-open-chat", (e, prompt) => {
 });
 
 ipcMain.handle("reset", () => {
-  sessionId = null;
+  chat.reset();
+  fs.rmSync(chatHistoryPath(), { force: true });
   pendingApprovals = new Map();
   declinedNote = "";
   clearChatScreenshots();
   return true;
 });
-ipcMain.handle("stop", () => { if (chatProc) { stopped = true; killProc(chatProc); } return true; });
+ipcMain.handle("stop", () => { chat.stop(); return true; });
+ipcMain.handle("chat-history", () => loadHistory().messages);
 
 ipcMain.handle("ask", async (_e, { text, image }) => {
   let prompt = text || "What's on my screen?";
@@ -638,14 +724,14 @@ ipcMain.handle("ask", async (_e, { text, image }) => {
     fs.writeFileSync(path.join(chatShotsDir(), name), Buffer.from(image, "base64"));
     prompt = `[I attached a screenshot of my screen: ./screenshots/${name}]\n\n${prompt}`;
   }
-  return chatTurn(prompt);
+  return chatTurn(prompt, { display: text || "What's on my screen?", image: !!image });
 });
 
 ipcMain.handle("recap", async () => {
   if (!loadConfig().memoryEnabled) return { ok: false, error: "Screen memory is off. Turn it on from the tray icon so I can keep track of what you're doing." };
   const prompt = recapPrompt(30);
   if (!prompt) return { ok: false, error: "I don't have any recent activity yet. Screen memory needs a few minutes of use first." };
-  return chatTurn(prompt);
+  return chatTurn(prompt, { display: "What did I just do?" });
 });
 
 // ids: approval ids to allow; always: subset to remember as standing rules.
@@ -657,7 +743,7 @@ ipcMain.handle("approve", async (_e, { ids, always = [] }) => {
   const list = chosen.map((a) => `- ${a.title}: ${a.detail}`).join("\n");
   return chatTurn(
     `[Widget: the user approved these blocked actions, and permissions now allow them:\n${list}\nRetry them now and carry on with the task.]`,
-    chosen.map((a) => a.rule),
+    { extraAllowed: chosen.map((a) => a.rule) },
   );
 });
 ipcMain.handle("decline", (_e, { ids }) => {
@@ -727,6 +813,9 @@ app.whenReady().then(() => {
     onWelcomeBack: (minutes) => widget.webContents.send("welcome-back", minutes),
   });
   memory.start();
+  chat = new ChatSession(chatOptions);
+  chat.sessionId = loadHistory().sessionId;
+  chat.warm(); // start Claude now so the first message is quick
   notesScannedText = readNotes().trim(); // only rescan notes after they change
   setInterval(autoScan, AUTO_SCAN_EVERY_MS);
 
@@ -743,11 +832,11 @@ app.whenReady().then(() => {
   if (failed.length) registerHotkeys(DEFAULT_HOTKEYS); // a saved shortcut is taken now: fall back to the defaults
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "icon.png")).resize({ width: 16, height: 16 }));
-  tray.setToolTip("Claude widgets (Ctrl+Shift+Space)");
+  tray.setToolTip(`overclaude ${app.getVersion()}`);
   tray.on("click", toggleAll);
   buildTray();
 });
 
-app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); killProc(chatProc); });
+app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat?.kill(); });
 module.exports = { toggleAll }; // for test scripts
 app.on("window-all-closed", (e) => e.preventDefault());

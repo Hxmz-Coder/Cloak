@@ -27,6 +27,12 @@ contextBridge.exposeInMainWorld("overlay", {
   onRunPrompt: on("run-prompt"),
   onWelcomeBack: on("welcome-back"),
   onTasksAdded: on("tasks-added"),
+  onChatEvent: on("chat-event"),
+  chatHistory: () => ipcRenderer.invoke("chat-history"),
+  onWidgetStatus: on("widget-status"),
+  onPanelsChanged: on("panels-changed"),
+  widgetsMenu: () => ipcRenderer.send("widgets-menu"),
+  toggleAllPanels: () => ipcRenderer.send("toggle-all-panels"),
 
   // panels (tasks, notes)
   togglePanel: (name) => ipcRenderer.send("toggle-panel", name),

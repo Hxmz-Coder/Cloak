@@ -53,11 +53,20 @@ $("themeReset").onclick = () => setTheme({ accent: "#d97757", opacity: 0.95 });
 
 // ---------- top widget ----------
 function renderTop() {
-  $("pLabel").value = S.pill.label;
-  $("pClock").checked = S.pill.clock;
-  $("pCount").checked = S.pill.taskCount;
-  $("pNext").checked = S.pill.nextTask;
-  document.querySelectorAll("#pPos button").forEach((b) => b.classList.toggle("on", b.dataset.v === (S.pill.position || "center")));
+  const p = S.pill;
+  if (document.activeElement !== $("pLabel")) $("pLabel").value = p.label ?? "";
+  $("pClock").checked = p.clock;
+  $("pDate").checked = !!p.date;
+  $("pCount").checked = p.taskCount;
+  $("pNext").checked = p.nextTask;
+  document.querySelectorAll("#pStyle button").forEach((b) => b.classList.toggle("on", b.dataset.v === (p.style || "island")));
+  $("islandOpts").style.display = p.style === "dot" ? "none" : "";
+  document.querySelectorAll("#pPos button").forEach((b) => b.classList.toggle("on", b.dataset.v === (p.position || "center")));
+  // Widgets Claude built can offer a line for the pill (e.g. the calendar's next event).
+  const custom = (S.panels || []).filter((w) => !w.builtin);
+  $("pWidgets").innerHTML = custom.map((w) => `
+    <div class="row"><div class="grow"><div class="t">${esc(w.label)}</div><div class="d">Whatever this widget shows at a glance, if it offers something.</div></div>
+      ${switchHtml((p.widgets || []).includes(w.name), `data-w="${esc(w.name)}"`)}</div>`).join("");
 }
 async function savePill(patch) {
   S.pill = { ...S.pill, ...patch };
@@ -65,10 +74,20 @@ async function savePill(patch) {
   renderTop();
 }
 let labelTimer;
-$("pLabel").addEventListener("input", () => { clearTimeout(labelTimer); labelTimer = setTimeout(() => savePill({ label: $("pLabel").value.trim() || "Claude" }), 300); });
+// An empty box means no text on the pill.
+$("pLabel").addEventListener("input", () => { clearTimeout(labelTimer); labelTimer = setTimeout(() => savePill({ label: $("pLabel").value.trim() }), 300); });
 $("pClock").onchange = () => savePill({ clock: $("pClock").checked });
+$("pDate").onchange = () => savePill({ date: $("pDate").checked });
 $("pCount").onchange = () => savePill({ taskCount: $("pCount").checked });
 $("pNext").onchange = () => savePill({ nextTask: $("pNext").checked });
+$("pStyle").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) savePill({ style: b.dataset.v }); });
+$("pWidgets").addEventListener("change", (e) => {
+  const id = e.target.dataset.w;
+  if (!id) return;
+  const set = new Set(S.pill.widgets || []);
+  e.target.checked ? set.add(id) : set.delete(id);
+  savePill({ widgets: [...set] });
+});
 $("pPos").addEventListener("click", (e) => { if (e.target.dataset.v) savePill({ position: e.target.dataset.v }); });
 
 // ---------- shortcut buttons ----------
@@ -233,6 +252,7 @@ $("resetPos").onclick = async () => { await ov.resetPositions(); $("resetPos").t
 function renderClaude() {
   $("memoryEnabled").checked = S.memoryEnabled;
   $("autoScan").checked = S.autoScan;
+  document.querySelectorAll("#chatSpeed button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.chatSpeed));
   $("allowList").innerHTML = S.autoAllow.length
     ? S.autoAllow.map((r, i) => `<div class="item"><div class="grow"><code>${esc(describeRule(r))}</code></div><button class="icon-btn" data-i="${i}" title="Ask me again">${ICON.del}</button></div>`).join("")
     : '<p class="hint">None yet. Claude asks before running commands that change things, editing files, or opening web pages.</p>';
@@ -246,6 +266,12 @@ function describeRule(r) {
 }
 $("memoryEnabled").onchange = () => ov.setSetting("memoryEnabled", $("memoryEnabled").checked);
 $("autoScan").onchange = () => ov.setSetting("autoScan", $("autoScan").checked);
+$("chatSpeed").addEventListener("click", async (e) => {
+  if (!e.target.dataset.v) return;
+  await ov.setSetting("chatSpeed", e.target.dataset.v);
+  S.chatSpeed = e.target.dataset.v;
+  renderClaude();
+});
 $("clearMem").onclick = async () => { await ov.clearMemory(); $("clearMem").textContent = "Cleared"; };
 $("allowList").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-i]");
@@ -299,6 +325,7 @@ async function refresh() {
   S = await ov.getSettings();
   renderAppearance(); renderTop(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys();
   $("openAtLogin").checked = S.openAtLogin;
+  $("version").textContent = `overclaude ${S.version}`;
 }
 show("appearance");
 refresh();

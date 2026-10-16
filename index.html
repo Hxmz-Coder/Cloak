@@ -16,7 +16,9 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   /* pill contents: sized to fit, so the window can shrink around them */
   .pill-info { display: inline-flex; align-items: center; gap: 8px; flex: none; white-space: nowrap; padding-right: 6px; }
+  .pill-info:empty, .pill-info.blank { display: none !important; }
   #status { font-weight: 600; }
+  #status:empty { display: none; }
   #status small { color: var(--muted); font-weight: 400; margin-left: 6px; }
   #pillExtra { display: inline-flex; gap: 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
   #pillExtra:empty { display: none; }
@@ -25,14 +27,27 @@
   body.unread .dot, body.away .dot, body.news .dot { display: block; }
   body.news .dot { background: var(--ok); }
 
-  #input { flex: 1; resize: none; background: transparent; border: 0; outline: 0; color: var(--text);
+  /* Dot style: just the logo in a small circle. A ring shows when something's waiting. */
+  body.dot-style[data-mode="pill"] .top { justify-content: center; padding: 0; }
+  body.dot-style[data-mode="pill"] .pill-info { display: none !important; }
+  body.dot-style.unread[data-mode="pill"] .logo, body.dot-style.news[data-mode="pill"] .logo, body.dot-style.away[data-mode="pill"] .logo {
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+
+  #input { flex: 1; min-width: 60px; resize: none; background: transparent; border: 0; outline: 0; color: var(--text);
     font: inherit; font-size: 14px; padding: 4px 2px; height: 26px; max-height: 26px; overflow: hidden; user-select: text; }
   #input::placeholder { color: var(--faint); }
   .send { display: grid; place-items: center; background: var(--accent); color: var(--on-accent); border: 0; border-radius: 50%;
     width: 28px; height: 28px; cursor: pointer; flex-shrink: 0; margin-left: 2px; }
   .send svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
   .send .stop-ic { display: none; } body.busy .send .send-ic { display: none; } body.busy .send .stop-ic { display: block; }
-  .sep { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
+  .sep { width: 1px; height: 18px; background: var(--border); margin: 0 3px; }
+
+  /* widget buttons */
+  #wbtns { display: flex; align-items: center; gap: 1px; }
+  .wb { position: relative; }
+  .wb.on::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); }
+  .wb .letter { width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700;
+    border: 1.5px solid currentColor; line-height: 1; }
 
   /* show/hide pieces per mode */
   .expanded-only { display: none; }
@@ -41,9 +56,12 @@
   body[data-mode="pill"] #input, body[data-mode="pill"] .actions { display: none; }
   .actions { display: flex; align-items: center; gap: 1px; }
 
-  /* ---------- shortcut tiles: small landscape, text only ---------- */
-  .tiles { flex-wrap: wrap; gap: 6px; padding: 2px 12px 12px; flex-shrink: 0; }
-  .tile { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 13px; border-radius: 9px;
+  /* ---------- shortcut buttons: one line, scrolls sideways ---------- */
+  .tiles { flex-wrap: nowrap; gap: 6px; padding: 2px 12px 10px; flex-shrink: 0; overflow-x: auto; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+  .tiles.at-end { -webkit-mask-image: none; mask-image: none; }
+  .tiles::-webkit-scrollbar { display: none; }
+  .tile { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px; border-radius: 9px;
     background: var(--panel); border: 1px solid var(--border); cursor: pointer; font-size: 12.5px; white-space: nowrap;
     transition: background .12s, border-color .12s; }
   .tile:hover { background: var(--panel-hi); border-color: rgba(var(--accent-rgb), .55); }
@@ -54,16 +72,17 @@
   .tile.tasks i { background: var(--warn); }
   .tile.add { border-style: dashed; color: var(--muted); background: transparent; }
   .tile.suggest { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(143,191,138,.15); }
-  body[data-mode="chat"] .tiles { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 8px; scrollbar-width: none; }
-  body[data-mode="chat"] .tiles::-webkit-scrollbar { display: none; }
-  body[data-mode="chat"] .tile { height: 28px; padding: 0 11px; font-size: 12px; }
 
   /* ---------- chat ---------- */
   .attach { align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 0 14px 8px; display: none !important; }
   body.has-shot:not([data-mode="pill"]) .attach { display: flex !important; }
   .attach img { height: 30px; border-radius: 5px; border: 1px solid var(--border); }
-  #log { flex: 1; overflow-y: auto; padding: 2px 14px 14px; flex-direction: column; border-top: 1px solid var(--border); user-select: text; }
-  body:not([data-mode="chat"]) #log { display: none; }
+  #chatArea { flex: 1; min-height: 0; flex-direction: column; border-top: 1px solid var(--border); }
+  body:not([data-mode="chat"]) #chatArea { display: none; }
+  .logbar { display: flex; align-items: center; padding: 6px 14px 0; font-size: 11.5px; color: var(--faint); flex-shrink: 0; }
+  .logbar button { margin-left: auto; background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 11.5px; padding: 2px 4px; border-radius: 6px; }
+  .logbar button:hover { color: var(--text); background: var(--panel); }
+  #log { flex: 1; overflow-y: auto; padding: 0 14px 14px; display: flex; flex-direction: column; user-select: text; }
   .msg { padding: 9px 12px; border-radius: 13px; max-width: 92%; white-space: pre-wrap; word-wrap: break-word; margin-top: 10px; }
   .user { align-self: flex-end; background: rgba(var(--accent-rgb), .16); border: 1px solid rgba(var(--accent-rgb), .32); }
   .bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
@@ -74,6 +93,9 @@
   .meta button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted); }
   .meta button:hover { color: var(--accent); }
   .meta .added { color: var(--ok); }
+  .activity { display: block; margin-top: 6px; font-size: 11.5px; color: var(--muted); font-style: italic; }
+  .activity:empty { display: none; }
+  .tag-shot { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; margin-right: 6px; }
   .shot { display: block; max-width: 100%; border-radius: 8px; margin-bottom: 6px; border: 1px solid var(--border); }
   .err { color: #ff9b8a; }
   .thinking { color: var(--muted); font-style: italic; }
@@ -96,10 +118,17 @@
   .approve.resolved { opacity: .6; }
   .approve.resolved .row { display: none; }
 
-  /* ---------- editor ---------- */
+  /* ---------- shortcut editor ---------- */
   .panel { flex: 1; flex-direction: column; gap: 9px; padding: 4px 16px 16px; border-top: 1px solid var(--border); overflow-y: auto; }
   body:not([data-mode="edit"]) #editor { display: none; }
-  body[data-mode="edit"] .tiles, body[data-mode="edit"] #log { display: none; }
+  body[data-mode="edit"] .tiles { display: none; }
+  .panel h3 { margin: 10px 0 0; font-size: 13.5px; font-weight: 600; }
+  #edPrompt { height: 96px; resize: none; }
+  .panel label { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
+  .panel input[type=checkbox] { accent-color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  .btns { display: flex; gap: 8px; margin-top: 2px; }
+  .btns .right { margin-left: auto; }
 </style>
 </head>
 <body data-mode="pill">
@@ -109,23 +138,16 @@
     <div class="pill-info pill-only" id="pillInfo"><span id="status"></span><span id="pillExtra"></span><span class="dot"></span></div>
     <textarea id="input" rows="1" placeholder="Ask Claude, or tell it what to do…"></textarea>
     <div class="actions">
-      <button class="icon-btn" id="shotBtn" title="Attach screenshot (Ctrl+Shift+S)">
+      <button class="icon-btn" id="shotBtn" title="Attach a screenshot (Ctrl+Shift+S)">
         <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
-      <button class="icon-btn" id="clipBtn" title="Paste clipboard into question">
-        <svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9z"/></svg></button>
       <div class="sep"></div>
-      <button class="icon-btn" id="tasksBtn" title="Tasks">
-        <svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg></button>
-      <button class="icon-btn" id="notesBtn" title="Notes">
-        <svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/></svg></button>
+      <div id="wbtns"></div>
       <div class="sep"></div>
-      <button class="icon-btn" id="newChat" title="New chat">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="icon-btn" id="pinBtn" title="Keep open">
         <svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3H7l3-3z"/><path d="M12 16v5"/></svg></button>
-      <button class="icon-btn" id="pillBtn" title="Settings">
+      <button class="icon-btn" id="settingsBtn" title="Settings">
         <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
-      <button class="icon-btn" id="hideBtn" title="Hide widget (Ctrl+Shift+Space brings it back)">
+      <button class="icon-btn" id="hideBtn" title="Hide (your show/hide shortcut brings it back)">
         <svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
       <button class="send" id="send" title="Send">
         <svg class="send-ic" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
@@ -137,7 +159,10 @@
 
   <div class="tiles expanded-only" id="tiles"></div>
 
-  <div id="log" class="expanded-only"></div>
+  <div id="chatArea" class="expanded-only">
+    <div class="logbar"><span>Chat</span><button id="newChat" title="Clear this conversation and start over">New chat</button></div>
+    <div id="log"></div>
+  </div>
 
   <div class="panel expanded-only" id="editor">
     <h3 id="edTitle">New shortcut</h3>

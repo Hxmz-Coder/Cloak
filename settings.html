@@ -53,6 +53,14 @@
   .preview .chip { height: 28px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; }
   .preview .chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
+  .styles { display: flex; gap: 10px; }
+  .styles button { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 18px 10px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--border); cursor: pointer; color: var(--muted); font-size: 12.5px; min-width: 130px; }
+  .styles button.on { border-color: var(--accent); color: var(--text); background: rgba(var(--accent-rgb), .08); }
+  .mini { display: inline-flex; align-items: center; gap: 6px; height: 30px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); padding: 0 12px 0 5px; }
+  .mini i { width: 20px; height: 20px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .mini b { font-size: 12px; color: var(--text); }
+  .mini.dot { padding: 0 4px; width: 30px; justify-content: center; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
   .seg button { background: none; border: 0; padding: 6px 14px; cursor: pointer; color: var(--muted); font-size: 12.5px; }
   .seg button + button { border-left: 1px solid var(--border); }
@@ -131,12 +139,22 @@
       <section id="s-top">
         <h2>Top widget</h2>
         <p class="lead">The small widget at the top of your screen. Hover it to open the chat bar.</p>
-        <h3>Text</h3>
-        <input type="text" id="pLabel" maxlength="24" placeholder="Claude" />
-        <h3>Also show</h3>
-        <div class="row"><div class="grow"><div class="t">The time</div></div><label class="switch"><input type="checkbox" id="pClock"><span></span></label></div>
-        <div class="row"><div class="grow"><div class="t">Open task count</div></div><label class="switch"><input type="checkbox" id="pCount"><span></span></label></div>
-        <div class="row"><div class="grow"><div class="t">My next task</div><div class="d">The one due soonest.</div></div><label class="switch"><input type="checkbox" id="pNext"><span></span></label></div>
+        <h3>Style</h3>
+        <div class="styles" id="pStyle">
+          <button data-v="island"><span class="mini island"><i></i><b>Claude</b></span>Island</button>
+          <button data-v="dot"><span class="mini dot"><i></i></span>Dot</button>
+        </div>
+        <div id="islandOpts">
+          <h3>Text</h3>
+          <input type="text" id="pLabel" maxlength="24" placeholder="No text" />
+          <p class="hint" style="margin:6px 0 0">Leave it empty for no text.</p>
+          <h3>Also show</h3>
+          <div class="row"><div class="grow"><div class="t">My next task</div><div class="d">The one due soonest.</div></div><label class="switch"><input type="checkbox" id="pNext"><span></span></label></div>
+          <div class="row"><div class="grow"><div class="t">Open task count</div></div><label class="switch"><input type="checkbox" id="pCount"><span></span></label></div>
+          <div class="row"><div class="grow"><div class="t">The date</div></div><label class="switch"><input type="checkbox" id="pDate"><span></span></label></div>
+          <div class="row"><div class="grow"><div class="t">The time</div></div><label class="switch"><input type="checkbox" id="pClock"><span></span></label></div>
+          <div id="pWidgets"></div>
+        </div>
         <h3>Position</h3>
         <div class="seg" id="pPos"><button data-v="left">Left</button><button data-v="center">Center</button><button data-v="right">Right</button></div>
       </section>
@@ -174,6 +192,8 @@
         <h2>Claude &amp; privacy</h2>
         <p class="lead">Everything below stays on this PC. Claude only sees it when you ask for a recap or a task scan.</p>
         <div class="row"><div class="grow"><div class="t">Screen memory</div><div class="d">Notes which app you're in and keeps screenshots from the last ~30 minutes, for "What did I just do?" and finding tasks.</div></div><label class="switch"><input type="checkbox" id="memoryEnabled"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Chat speed</div><div class="d">Fast answers instantly; Smart thinks harder on tough questions. Replies stream in either way.</div></div>
+          <div class="seg" id="chatSpeed"><button data-v="fast">Fast</button><button data-v="balanced">Balanced</button><button data-v="smart">Smart</button></div></div>
         <div class="row"><div class="grow"><div class="t">Find tasks automatically</div><div class="d">Every 40 minutes, looks through recent activity and changed notes for things you need to do. Uses some of your Claude usage.</div></div><label class="switch"><input type="checkbox" id="autoScan"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">Clear screen memory</div><div class="d">Deletes the saved activity and screenshots now.</div></div><button class="btn" id="clearMem">Clear</button></div>
         <h3>Actions Claude may take without asking</h3>
@@ -195,7 +215,7 @@
         <h2>General</h2>
         <div class="row"><div class="grow"><div class="t">Start when I sign in to Windows</div></div><label class="switch"><input type="checkbox" id="openAtLogin"><span></span></label></div>
         <h3>About</h3>
-        <p class="hint">Claude Overlay runs Claude through the Claude Code CLI on this computer, using your own Claude subscription login. No API key is used.</p>
+        <p class="hint"><b id="version">overclaude</b> runs Claude through the Claude Code CLI on this computer, using your own Claude subscription login. No API key is used.</p>
       </section>
     </main>
   </div>

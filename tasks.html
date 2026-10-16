@@ -10,7 +10,7 @@
   .badge { background: rgba(227,184,107,.16); color: var(--warn); }
   body.new .title small { color: var(--ok); }
 
-  #list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; padding: 4px 8px 6px; min-height: 0; }
+  #list { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; padding: 4px 8px 6px; min-height: 0; }
   .empty { color: var(--muted); font-size: 12.5px; padding: 18px 8px; text-align: center; }
   .flash { color: var(--muted); font-size: 12px; padding: 8px 6px 2px; }
   .task { display: flex; align-items: flex-start; gap: 9px; padding: 8px 6px; border-radius: 9px; }
@@ -45,7 +45,16 @@
   .due { color: var(--muted); }
   .due.soon { color: var(--warn); font-weight: 600; }
   .due.late { color: #ff9b8a; font-weight: 600; }
-  .due-in { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+  .addrow input[type=time] { display: none; flex: 0 0 auto; width: 96px; padding: 6px 6px; }
+  .addrow.has-day input[type=time] { display: block; }
+  input[type=time] { font-size: 12px; }
+  /* inline due date/time editor under a task */
+  .due-edit { display: none; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+  .task.editing .due-edit { display: flex; }
+  .due-edit input { padding: 4px 6px; font-size: 12px; }
+  .due-edit input[type=date] { width: 122px; }
+  .due-edit input[type=time] { width: 96px; }
+  .due-edit .btn { padding: 3px 9px; font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -62,6 +71,7 @@
   <div class="addrow">
     <input type="text" id="newTask" placeholder="Add a task…" maxlength="200" />
     <input type="date" id="newDue" title="Due date (optional)" />
+    <input type="time" id="newTime" title="Time (optional)" />
     <select id="newCat">
       <option value="other">Other</option>
       <option value="homework">Homework</option>

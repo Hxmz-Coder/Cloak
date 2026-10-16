@@ -17,7 +17,7 @@ function esc(s) {
 }
 // Tiny markdown: code fences, inline code, bold, italics.
 function md(s) {
-  return s.split(/```(?:\w+)?\n?/).map((p, i) => {
+  return String(s).split(/```(?:\w+)?\n?/).map((p, i) => {
     if (i % 2) return `<pre><code>${esc(p)}</code></pre>`;
     return esc(p)
       .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -37,32 +37,25 @@ function setMode(m) {
   if (m === "chat") { body.classList.remove("unread"); log.scrollTop = log.scrollHeight; }
   updateStatus();
 }
-let lastBarH = 0;
-let lastPillW = 0;
+let lastSize = "";
 function sendSize() {
-  lastBarH = 0;
-  lastPillW = 0;
-  if (mode === "pill") return requestAnimationFrame(fitPill);
-  if (mode !== "bar") return window.overlay.setMode(mode);
-  requestAnimationFrame(fitBar);
+  lastSize = "";
+  requestAnimationFrame(fit);
 }
-// The pill is only as wide as what it shows (logo + your chosen items).
-function fitPill() {
-  if (mode !== "pill") return;
-  const w = Math.ceil($("pillInfo").getBoundingClientRect().width) + 64;
-  if (w !== lastPillW) { lastPillW = w; window.overlay.setMode("pill", w); }
+// Pill: only as wide as what it shows. Bar: header + one row of shortcuts. Chat/edit: fixed sizes.
+function fit() {
+  let size;
+  if (mode === "pill") size = body.classList.contains("dot-style") ? 58 : Math.ceil($("pillInfo").getBoundingClientRect().width) + 64;
+  else if (mode === "bar") size = 44 + $("tiles").offsetHeight + (body.classList.contains("has-shot") ? 42 : 0) + 16;
+  const key = `${mode}:${size}`;
+  if (key !== lastSize) { lastSize = key; window.overlay.setMode(mode, size); }
 }
-// The bar is as tall as its tiles need. Tiles wrap by width, so this re-runs once the window has widened.
-function fitBar() {
-  if (mode !== "bar") return;
-  const attach = body.classList.contains("has-shot") ? 42 : 0;
-  const h = 44 + $("tiles").offsetHeight + attach + 16;
-  if (h !== lastBarH) { lastBarH = h; window.overlay.setMode("bar", h); }
-}
-window.addEventListener("resize", () => requestAnimationFrame(fitBar));
+window.addEventListener("resize", () => requestAnimationFrame(fit));
+
 function expand() {
   clearTimeout(collapseTimer);
-  if (mode === "pill") setMode(hasChat() && (busy || body.classList.contains("unread")) ? "chat" : "bar");
+  // If there's a conversation, show it straight away.
+  if (mode === "pill") setMode(hasChat() ? "chat" : "bar");
 }
 function collapse() {
   if (pinned || mode === "edit" || capturing) return;
@@ -88,43 +81,52 @@ document.documentElement.addEventListener("mouseleave", () => {
 });
 document.documentElement.addEventListener("mouseenter", () => clearTimeout(collapseTimer));
 window.overlay.onBlur(() => collapse());
-// Ctrl+Shift+Space opens the bar (with the panels); pressing it again puts everything away.
+// The show/hide shortcut opens the bar (with the panels); pressing it again puts everything away.
 window.overlay.onOpenBar(() => openAndFocus(hasChat() ? "chat" : "bar"));
 window.overlay.onCollapse(() => { setPinned(false); setMode("pill"); });
 
-// ---------- what the pill shows (customizable) ----------
-let pillCfg = { label: "Claude", clock: false, taskCount: false, nextTask: false };
+// ---------- what the pill shows (customizable in Settings > Top widget) ----------
+let pillCfg = { label: "Claude", style: "island" };
 let taskCache = [];
+let widgetStatus = {}; // custom widget id -> short status text it published
 let newsTimer = null;
 
+const fmtTime = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
 function pillExtrasHtml(cfg) {
   const open = taskCache.filter((t) => !t.done);
   const parts = [];
   if (cfg.nextTask && open.length) {
-    // soonest due date first, then oldest
-    const next = [...open].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || a.created - b.created)[0];
-    parts.push(`<span class="next">${esc(next.title)}</span>`);
+    // soonest due date (and time) first, then oldest
+    const key = (t) => (t.due || "9999") + (t.time || "99:99");
+    const next = [...open].sort((a, b) => key(a).localeCompare(key(b)) || a.created - b.created)[0];
+    parts.push(`<span class="next">${esc(next.title)}${next.time ? ` · ${fmtTime(next.time)}` : ""}</span>`);
   }
+  for (const id of cfg.widgets || []) if (widgetStatus[id]) parts.push(`<span class="next">${esc(widgetStatus[id])}</span>`);
   if (cfg.taskCount) parts.push(`<span>${open.length} task${open.length === 1 ? "" : "s"}</span>`);
+  if (cfg.date) parts.push(`<span>${new Date().toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</span>`);
   if (cfg.clock) parts.push(`<span>${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`);
   return parts.join('<span style="opacity:.4">·</span>');
 }
 function updateStatus() {
   const s = $("status");
   const news = body.classList.contains("news");
+  body.classList.toggle("dot-style", pillCfg.style === "dot");
   if (busy) s.innerHTML = "Working…";
   else if (body.classList.contains("unread")) s.innerHTML = "Answer ready";
   else if (body.classList.contains("away")) s.innerHTML = "Welcome back <small>recap?</small>";
   else if (news) s.innerHTML = esc(body.dataset.news || "");
-  else s.innerHTML = esc(pillCfg.label || "Claude");
+  else s.innerHTML = esc(pillCfg.label ?? "Claude");
   // Temporary messages replace your chosen extras so the pill stays small.
   const plain = !busy && !news && !body.classList.contains("unread") && !body.classList.contains("away");
   $("pillExtra").innerHTML = plain ? pillExtrasHtml(pillCfg) : "";
-  if (mode === "pill") requestAnimationFrame(fitPill);
+  const dotShown = body.classList.contains("unread") || body.classList.contains("away") || news;
+  $("pillInfo").classList.toggle("blank", !s.innerHTML && !$("pillExtra").innerHTML && !dotShown);
+  if (mode === "pill") requestAnimationFrame(fit);
 }
-setInterval(() => { if (pillCfg.clock) updateStatus(); }, 15_000);
+setInterval(() => { if (pillCfg.clock || pillCfg.date) updateStatus(); }, 15_000);
 
 window.overlay.onTasksChanged((list) => { taskCache = list; updateStatus(); });
+window.overlay.onWidgetStatus(({ id, text }) => { widgetStatus[id] = text; updateStatus(); });
 window.overlay.onTasksAdded((n) => {
   body.dataset.news = `Added ${n} task${n > 1 ? "s" : ""}`;
   body.classList.add("news");
@@ -134,13 +136,13 @@ window.overlay.onTasksAdded((n) => {
 });
 
 // Settings: the sliders button, or right-click the small widget.
-$("pillBtn").onclick = () => window.overlay.openSettings();
+$("settingsBtn").onclick = () => window.overlay.openSettings();
 $("shell").addEventListener("contextmenu", (e) => { if (mode === "pill") { e.preventDefault(); window.overlay.openSettings("top"); } });
-window.overlay.onPillChanged((p) => { pillCfg = p; lastPillW = 0; updateStatus(); if (mode === "pill") sendSize(); });
+window.overlay.onPillChanged((p) => { pillCfg = p; updateStatus(); sendSize(); });
 window.overlay.onShortcutsChanged((list) => { shortcuts = list; renderTiles(); });
 
 // After you've been away, offer a recap for a while.
-window.overlay.onWelcomeBack((minutes) => {
+window.overlay.onWelcomeBack(() => {
   body.classList.add("away");
   document.querySelector('.tile[data-action="recap"]')?.classList.add("suggest");
   updateStatus();
@@ -152,6 +154,43 @@ function clearAway() {
   document.querySelectorAll(".tile.suggest").forEach((t) => t.classList.remove("suggest"));
   updateStatus();
 }
+
+// ---------- widget buttons (Tasks, Notes, and widgets Claude built) ----------
+const ICONS = {
+  tasks: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>',
+  notes: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg>',
+  all: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>',
+};
+const MAX_DIRECT = 3; // more widgets than this: the rest go in the folder
+function renderWidgetButtons(panels) {
+  const box = $("wbtns");
+  box.innerHTML = "";
+  const direct = panels.length > MAX_DIRECT + 1 ? panels.slice(0, MAX_DIRECT) : panels;
+  for (const p of direct) {
+    const b = document.createElement("button");
+    b.className = `icon-btn wb${p.visible ? " on" : ""}`;
+    b.title = p.label;
+    b.innerHTML = ICONS[p.name] || `<span class="letter">${esc(p.label.trim().charAt(0).toUpperCase())}</span>`;
+    b.onclick = () => window.overlay.togglePanel(p.name);
+    box.appendChild(b);
+  }
+  if (direct.length < panels.length) {
+    const f = document.createElement("button");
+    f.className = `icon-btn wb${panels.slice(MAX_DIRECT).some((p) => p.visible) ? " on" : ""}`;
+    f.title = `${panels.length - direct.length} more widgets`;
+    f.innerHTML = ICONS.folder;
+    f.onclick = () => window.overlay.widgetsMenu();
+    box.appendChild(f);
+  }
+  const all = document.createElement("button");
+  all.className = "icon-btn";
+  all.title = panels.some((p) => p.visible) ? "Hide all widgets" : "Open all widgets";
+  all.innerHTML = ICONS.all;
+  all.onclick = () => window.overlay.toggleAllPanels();
+  box.appendChild(all);
+}
+window.overlay.onPanelsChanged(renderWidgetButtons);
 
 // ---------- chat ----------
 function add(cls, html) {
@@ -174,14 +213,33 @@ function setBusy(b) {
   updateStatus();
 }
 
-// Runs one turn: shows your message (if any), a thinking bubble, then Claude's reply.
+// The reply being written right now: text streams in, and a line under it says what Claude is doing.
+let live = null; // { el, text }
+window.overlay.onChatEvent((ev) => {
+  if (!live) return;
+  if (ev.type === "text") {
+    live.text += ev.text;
+    live.activity = "";
+  } else if (ev.type === "tool") {
+    live.activity = `${ev.label}…`;
+  } else if (ev.type === "message" && live.text && !live.text.endsWith("\n")) {
+    live.text += "\n\n"; // a new step after a tool: keep earlier text, start a new paragraph
+  }
+  live.el.innerHTML = (live.text ? md(live.text) : THINKING) + `<span class="activity">${esc(live.activity || "")}</span>`;
+  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  if (nearBottom) log.scrollTop = log.scrollHeight;
+});
+
+// Runs one turn: shows your message (if any), Claude's reply as it streams, then the final reply.
 async function turn(userHtml, call) {
   if (busy) return;
   setMode("chat");
   if (userHtml) add("user", userHtml);
   const el = add("bot", THINKING);
+  live = { el, text: "", activity: "" };
   setBusy(true);
   const res = await call();
+  live = null;
   setBusy(false);
   showReply(el, res);
   if (mode === "pill") { body.classList.add("unread"); updateStatus(); }
@@ -189,7 +247,7 @@ async function turn(userHtml, call) {
 
 function showReply(el, res) {
   if (!res.ok) { el.innerHTML = `<span class="err">${md(res.error)}</span>`; return; }
-  if (res.stopped) { el.innerHTML = "<i>stopped</i>"; return; }
+  if (res.stopped) { el.innerHTML = el.querySelector(".activity") ? el.innerHTML.replace(/<span class="activity">.*<\/span>$/, "") + "<br><i>stopped</i>" : "<i>stopped</i>"; return; }
   el.innerHTML = md(res.text || (res.approvals?.length ? "I need your OK before I go on." : "Done."));
   const meta = document.createElement("div");
   meta.className = "meta";
@@ -279,20 +337,23 @@ document.addEventListener("keydown", (e) => {
 function setPinned(p) { pinned = p; $("pinBtn").classList.toggle("on", p); }
 $("send").onclick = () => submit();
 $("shotBtn").onclick = async () => { const s = await capture(); if (s) setShot(s); openAndFocus(mode === "pill" ? "bar" : mode); };
-$("clipBtn").onclick = async () => { input.value += (input.value ? "\n" : "") + (await window.overlay.readClipboard()); input.focus(); };
-$("tasksBtn").onclick = () => window.overlay.togglePanel("tasks");
-$("notesBtn").onclick = () => window.overlay.togglePanel("notes");
 $("hideBtn").onclick = () => { setPinned(false); setMode("pill"); window.overlay.hideWidget(); };
 $("clearShot").onclick = () => setShot(null);
 $("pinBtn").onclick = () => setPinned(!pinned);
-$("newChat").onclick = async () => { await window.overlay.reset(); log.innerHTML = ""; setMode("bar"); input.focus(); };
+$("newChat").onclick = async () => {
+  if (busy) return;
+  await window.overlay.reset();
+  log.innerHTML = "";
+  setMode("bar");
+  input.focus();
+};
 window.overlay.onTriggerCapture(async () => {
   const s = await capture();
   if (s) setShot(s);
   openAndFocus(hasChat() ? "chat" : "bar");
 });
 
-// ---------- shortcut tiles ----------
+// ---------- shortcut buttons: one line; the mouse wheel scrolls it sideways ----------
 function tileKind(sc) {
   if (sc.action === "recap") return "memory";
   if (sc.action === "scan") return "tasks";
@@ -300,9 +361,14 @@ function tileKind(sc) {
   if ((sc.prompt || "").includes("{clipboard}")) return "clip";
   return "";
 }
+const tilesBox = $("tiles");
+tilesBox.addEventListener("wheel", (e) => {
+  if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { tilesBox.scrollLeft += e.deltaY; e.preventDefault(); }
+}, { passive: false });
+const markEnd = () => tilesBox.classList.toggle("at-end", tilesBox.scrollLeft + tilesBox.clientWidth >= tilesBox.scrollWidth - 4);
+tilesBox.addEventListener("scroll", markEnd);
 function renderTiles() {
-  const box = $("tiles");
-  box.innerHTML = "";
+  tilesBox.innerHTML = "";
   for (const sc of shortcuts) {
     const b = document.createElement("button");
     b.className = `tile ${tileKind(sc)}`;
@@ -311,14 +377,16 @@ function renderTiles() {
     b.innerHTML = `<i></i>${esc(sc.label)}`;
     b.onclick = () => runShortcut(sc);
     b.oncontextmenu = (e) => { e.preventDefault(); if (!sc.action) openEditor(sc); };
-    box.appendChild(b);
+    tilesBox.appendChild(b);
   }
-  const add = document.createElement("button");
-  add.className = "tile add";
-  add.textContent = "+ Add shortcut";
-  add.onclick = () => openEditor(null);
-  box.appendChild(add);
-  if (body.classList.contains("away")) box.querySelector('[data-action="recap"]')?.classList.add("suggest");
+  const addBtn = document.createElement("button");
+  addBtn.className = "tile add";
+  addBtn.textContent = "+ Add";
+  addBtn.title = "Add a shortcut button";
+  addBtn.onclick = () => openEditor(null);
+  tilesBox.appendChild(addBtn);
+  if (body.classList.contains("away")) tilesBox.querySelector('[data-action="recap"]')?.classList.add("suggest");
+  requestAnimationFrame(markEnd);
   sendSize();
 }
 
@@ -350,7 +418,7 @@ function openEditor(sc) {
   window.overlay.focus();
   setTimeout(() => $("edLabel").focus(), 30);
 }
-function closeEditor() { editingId = null; setMode("bar"); }
+function closeEditor() { editingId = null; setMode(hasChat() ? "chat" : "bar"); }
 
 $("edSave").onclick = async () => {
   const label = $("edLabel").value.trim(), prompt = $("edPrompt").value.trim();
@@ -385,7 +453,14 @@ $("edReset").onclick = async () => {
   const cfg = await window.overlay.getConfig();
   shortcuts = cfg.shortcuts;
   pillCfg = cfg.pill;
+  widgetStatus = cfg.widgetStatus || {};
   taskCache = await window.overlay.listTasks();
+  // Bring back the conversation from last time.
+  for (const m of await window.overlay.chatHistory()) {
+    if (m.role === "user") add("user", (m.image ? '<span class="tag-shot">screenshot</span>' : "") + esc(m.text));
+    else add("bot", md(m.text));
+  }
   renderTiles();
+  renderWidgetButtons(cfg.panels || []);
   updateStatus();
 })();

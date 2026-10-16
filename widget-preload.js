@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("overlay", {
     onChange: (cb) => ipcRenderer.on("tasks-changed", (_e, list) => cb(list)),
   },
   notes: { get: () => call("notes.get") },
+  pill: { setStatus: (text) => call("pill.setStatus", text) },
   ask: (prompt) => call("ask", prompt),
   openChat: (prompt) => ipcRenderer.send("widget-open-chat", String(prompt || "")),
   today: () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; },
