@@ -1,14 +1,14 @@
-# overclaude
+# Cloak
 
 A customizable Claude overlay for your Windows desktop. It adds a small widget at the top of your screen with a chat bar, a task list, notes, screen memory, and widgets that Claude builds for you.
 
 It runs Claude through the [Claude Code](https://code.claude.com) CLI, using either **your Claude subscription** (Pro or Max, with no extra cost) or **your own Anthropic API key** (pay per use). A setup guide walks you through either one.
 
-**v1.0.1**
+**v1.0.2**
 
 ## Features
 
-- **Setup guide.** On first launch, a short guide asks what you'll use overclaude for, connects Claude step by step (it can run the official Claude Code installer, open sign-in, or take an API key), picks a starting mode, and tours the essentials. You can reopen it from Settings, General.
+- **Setup guide.** On first launch, a short guide asks what you'll use Cloak for, connects Claude step by step (it can run the official Claude Code installer, open sign-in, or take an API key), picks a starting mode, and tours the essentials. You can reopen it from Settings, General.
 - **Modes.** Switch how Claude behaves for what you're doing: **General**, **Homework** (concepts, steps, checking your work), **Practice** (a hint first, then the solution, and it won't complete live graded quizzes or tests), **Writing** and **Coding**. Each mode has its own instructions and shortcut buttons. Switch from the chat bar, or by right-clicking the top widget. Edit any mode, write your own, or describe one and Claude creates it. Modes never change your privacy settings or what needs your approval.
 - **Top widget.** Choose an **Island** (text plus whatever you pick: your next task, task count, date, time, or a status from one of your widgets) or a minimal **Dot**. The text can be empty. It always shows what you chose; the only things that replace it for a moment are chat activity, something due right now ("Now: Dentist"), and new tasks. It opens into the chat bar when you hover over it.
 - **Fast chat.** Claude stays running in the background, and replies stream in word by word, usually starting within about a second. You'll see what it's doing ("Searching the web…"). Your conversation is still there after a restart.
@@ -53,19 +53,19 @@ If `claude` isn't on your PATH, set `CLAUDE_CLI_PATH` to its full path. With the
 
 ## FAQ
 
-**Can it see my claude.ai or Claude app chats?** No. overclaude signs in with your Claude account through Claude Code, but Claude Code can't read your claude.ai conversations, and no app can. overclaude keeps its own conversation, which is still there after a restart, and gives Claude your tasks, the time, and (when you ask) your screen and recent activity.
+**Can it see my claude.ai or Claude app chats?** No. Cloak signs in with your Claude account through Claude Code, but Claude Code can't read your claude.ai conversations, and no app can. Cloak keeps its own conversation, which is still there after a restart, and gives Claude your tasks, the time, and (when you ask) your screen and recent activity.
 
-**Why is the first reply after starting a bit slower?** Claude starts up once in the background when overclaude launches. After that, replies begin streaming within about a second.
+**Why is the first reply after starting a bit slower?** Claude starts up once in the background when Cloak launches. After that, replies begin streaming within about a second.
 
 ## Privacy and safety
 
-- Screen memory, notes, tasks and chat history are stored only in `%APPDATA%\overclaude`. Claude sees them only when you ask for a recap or a task scan, or when a task scan runs automatically (you can turn that off in Settings).
+- Screen memory, notes, tasks and chat history are stored only in `%APPDATA%\cloak`. Claude sees them only when you ask for a recap or a task scan, or when a task scan runs automatically (you can turn that off in Settings).
 - In chat, Claude can read files in your user folder and search the web without asking. Everything else needs your approval.
 - Custom widgets run **sandboxed**: no Node.js, no network, and no file access. They only get a small API: their own storage, your tasks, read-only notes, asking Claude, and a status line for the top widget.
 
 ## Building widgets by hand
 
-Claude-built widgets live in `%APPDATA%\overclaude\widgets\<id>\`. `source.json` holds the HTML, CSS and JS. The full widget API and its rules are documented in [`lib/widgets.js`](lib/widgets.js) (`API_DOC`).
+Claude-built widgets live in `%APPDATA%\cloak\widgets\<id>\`. `source.json` holds the HTML, CSS and JS. The full widget API and its rules are documented in [`lib/widgets.js`](lib/widgets.js) (`API_DOC`).
 
 ## Project layout
 
@@ -84,4 +84,23 @@ Claude-built widgets live in `%APPDATA%\overclaude\widgets\<id>\`. `source.json`
 | `theme.css` / `theme.js` / `panel.*` | Shared look, theme syncing, and the movable panel frame |
 | `widget-preload.js` | The only API custom widgets get |
 
-Set `OVERCLAUDE_DATA_DIR` to keep data in a different folder, for example for testing.
+Set `CLOAK_DATA_DIR` to keep data in a different folder, for example for testing.
+
+## Testing
+
+`npm run test:new-user` starts Cloak several times as a brand-new user, each run with its own throwaway profile, and runs eight scenarios:
+
+| Scenario | What it covers |
+|---|---|
+| `first-run` | The setup guide, the pill, the bar, Settings, panels and themes |
+| `student` | Homework answers checked against known results, plus tasks from chat |
+| `practice` | Hints first, and refusing live graded tests |
+| `writer-coder` | Writing and Coding modes |
+| `actions` | Reading versus approval-required actions |
+| `notes` | Turning notes into tasks |
+| `builders` | Creating a mode and a widget with Claude |
+| `edge-cases` | Bad API keys, HTML in messages, long input, Stop, and New chat |
+
+Every window and console error is recorded, and so is every answer Claude gives. Reports go to `tests/results/`. To run one scenario several times, use `npm run test:new-user -- student x3`.
+
+These tests make real Claude requests, so they use some of your plan's usage.

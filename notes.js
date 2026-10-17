@@ -1,4 +1,4 @@
-// Notes panel: your own writing, autosaved. To-dos in it are added to your Tasks automatically (overclaude asks
+// Notes panel: your own writing, autosaved. To-dos in it are added to your Tasks automatically (Cloak asks
 // Claude a few seconds after you stop typing); Claude only reads your notes and never changes them.
 const notes = document.getElementById("notes"), saved = document.getElementById("saved"), foot = document.getElementById("foot");
 const syncBtn = document.getElementById("syncBtn"), syncText = document.getElementById("syncText");

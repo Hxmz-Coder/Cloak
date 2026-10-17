@@ -435,7 +435,7 @@ async function refresh() {
   $("openAtLogin").checked = S.openAtLogin;
   $("notesSync").checked = S.notesSync;
   $("pShowMode").checked = S.pill.showMode !== false;
-  $("version").textContent = `overclaude ${S.version}`;
+  $("version").textContent = `Cloak ${S.version}`;
 }
 show("appearance");
 refresh();

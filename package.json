@@ -1,11 +1,12 @@
 {
-  "name": "overclaude",
-  "productName": "overclaude",
-  "version": "1.0.1",
+  "name": "cloak",
+  "productName": "Cloak",
+  "version": "1.0.2",
   "description": "A customizable Claude overlay for your Windows desktop: chat bar, tasks, notes, screen memory, and widgets Claude builds for you.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test:new-user": "node tests/run-all.js"
   },
   "repository": {
     "type": "git",

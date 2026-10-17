@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 rem First run (or after a fresh clone): install Electron and the other dependencies.
 if not exist "node_modules\electron\dist\electron.exe" (
-  echo Setting up Claude Overlay for the first time. This takes a minute...
+  echo Setting up Cloak for the first time. This takes a minute...
   call npm install
   if errorlevel 1 (
     echo.

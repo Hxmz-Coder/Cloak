@@ -15,15 +15,15 @@ const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHE
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
-// Data lives in %APPDATA%\overclaude. Earlier versions (named "claude-overlay") used %APPDATA%\claude-overlay;
-// move that over once so tasks, notes, settings and widgets carry across the rename.
-app.setName("overclaude");
-// OVERCLAUDE_DATA_DIR points it at a different folder instead (e.g. a test or portable profile).
+// Data lives in %APPDATA%\cloak. Earlier versions used %APPDATA%\overclaude (and before that
+// %APPDATA%\claude-overlay); the newest one found is moved over once so everything carries across the rename.
+app.setName("cloak");
+// CLOAK_DATA_DIR points it at a different folder instead (e.g. a test or portable profile).
 (() => {
-  const custom = process.env.OVERCLAUDE_DATA_DIR;
-  const dir = custom || path.join(app.getPath("appData"), "overclaude");
-  const old = path.join(app.getPath("appData"), "claude-overlay");
-  if (!custom && !fs.existsSync(dir) && fs.existsSync(old)) {
+  const custom = process.env.CLOAK_DATA_DIR || process.env.OVERCLAUDE_DATA_DIR;
+  const dir = custom || path.join(app.getPath("appData"), "cloak");
+  const old = ["overclaude", "claude-overlay"].map((n) => path.join(app.getPath("appData"), n)).find((p) => fs.existsSync(p));
+  if (!custom && !fs.existsSync(dir) && old) {
     try {
       fs.cpSync(old, dir, { recursive: true, filter: (src) => !/[\\/](Cache|Code Cache|GPUCache|DawnCache|DawnGraphiteCache|Crashpad|blob_storage)([\\/]|$)/i.test(src) });
     } catch {}
@@ -47,7 +47,7 @@ Some actions need the user's approval: shell commands that change things, creati
 
 Screenshots: when the user's message lists screenshot paths, open them with the Read tool before answering.
 
-Task list: the user has a task list widget. To add tasks to it, put a fenced code block with the language "tasks" in your reply, one task per line as "category | title | due", where category is homework, email, unfinished or other, and due is an optional YYYY-MM-DD date. The widget removes the block and adds the tasks. Add tasks when the user asks, or when you notice something they clearly need to do later. Don't add duplicates of their open tasks.
+Task list: the user has a task list widget. To add tasks to it, put a fenced code block with the language "tasks" in your reply, one task per line as "category | title | due | time", where category is homework, email, unfinished or other, due is an optional YYYY-MM-DD date, and time is an optional 24-hour HH:MM (only with a due date). Put dates and times in those fields, not in the title. Example: "homework | Study for biology quiz | 2026-10-17 | 16:00". The widget removes the block and adds the tasks. Add tasks when the user asks, or when you notice something they clearly need to do later. Don't add duplicates of their open tasks.
 
 Notes: the user keeps personal notes in a notes widget. They are the user's own writing; you only see them when they're included in a message. Never rewrite or "submit" them.
 
@@ -165,7 +165,7 @@ function makeWindow(file, size) {
   });
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true);
-  win.loadFile(file);
+  win.loadFile(path.join(__dirname, file)); // absolute, so it works whatever folder Cloak was started from
   win.on("blur", () => { if (!capturing) win.webContents.send("blurred"); });
   return win;
 }
@@ -717,7 +717,7 @@ function loadAuth() {
   if (cfg.authMode === "apiKey" && cfg.apiKeyEnc && safeStorage.isEncryptionAvailable()) {
     try { apiKey = safeStorage.decryptString(Buffer.from(cfg.apiKeyEnc, "base64")); } catch {}
   }
-  setAuth({ mode: cfg.authMode, apiKey });
+  setAuth({ mode: cfg.authMode, apiKey, configDir: path.join(userData(), "claude-apikey") });
 }
 const authSignature = () => { const c = loadConfig(); return `${c.authMode || "subscription"}:${(c.apiKeyEnc || "").slice(-16)}`; };
 function authStatus() {
@@ -763,7 +763,7 @@ function openTerminal(script) {
 ipcMain.on("install-claude", () => openTerminal(
   "Write-Host 'Installing Claude Code (official installer from claude.ai)...' -ForegroundColor Cyan; " +
   "irm https://claude.ai/install.ps1 | iex; Write-Host ''; " +
-  "Write-Host 'Done. Go back to overclaude and click Check again. You can close this window.' -ForegroundColor Green"));
+  "Write-Host 'Done. Go back to Cloak and click Check again. You can close this window.' -ForegroundColor Green"));
 ipcMain.on("open-claude-login", () => {
   const exe = findClaude();
   if (!exe) return;
@@ -771,7 +771,7 @@ ipcMain.on("open-claude-login", () => {
     "Write-Host 'Sign in to Claude:' -ForegroundColor Cyan; " +
     "Write-Host '  1. Type /login and press Enter'; " +
     "Write-Host '  2. Choose your Claude account (Pro or Max), not Anthropic Console'; " +
-    "Write-Host '  3. Finish in your browser, then type /exit and go back to overclaude'; Write-Host ''; " +
+    "Write-Host '  3. Finish in your browser, then type /exit and go back to Cloak'; Write-Host ''; " +
     `& '${exe.replace(/'/g, "''")}'`);
 });
 // Only a few known pages can be opened from the setup screens.
@@ -1066,11 +1066,14 @@ app.whenReady().then(() => {
   if (failed.length) registerHotkeys(DEFAULT_HOTKEYS); // a saved shortcut is taken now: fall back to the defaults
 
   tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "icon.png")).resize({ width: 16, height: 16 }));
-  tray.setToolTip(`overclaude ${app.getVersion()}`);
+  tray.setToolTip(`Cloak ${app.getVersion()}`);
   tray.on("click", toggleAll);
   buildTray();
 });
 
 app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat?.kill(); });
+// Also clean up when Cloak exits without a normal quit (app.exit, a crash handler, etc.); the screen-memory
+// helper would otherwise keep the process from closing.
+process.on("exit", () => { try { memory?.stop(); chat?.kill(); } catch {} });
 module.exports = { toggleAll }; // for test scripts
 app.on("window-all-closed", (e) => e.preventDefault());

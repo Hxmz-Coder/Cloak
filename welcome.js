@@ -16,7 +16,7 @@ function go(i) {
   $("dots").innerHTML = STEPS.map((_, j) => `<i class="${j <= step ? "on" : ""}"></i>`).join("");
   $("backBtn").style.visibility = step === 0 ? "hidden" : "visible";
   $("skipBtn").style.visibility = step === STEPS.length - 1 ? "hidden" : "visible";
-  $("nextBtn").textContent = step === 0 ? "Get started" : step === STEPS.length - 1 ? "Start using overclaude" : "Next";
+  $("nextBtn").textContent = step === 0 ? "Get started" : step === STEPS.length - 1 ? "Start using Cloak" : "Next";
   if (STEPS[step] === "connect") checkInstall();
   if (STEPS[step] === "mode") renderModes();
   if (STEPS[step] === "done") renderDone();
