@@ -4,7 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const { pathToFileURL } = require("url");
 const { runClaude, friendlyError, findClaude, setAuth } = require("./lib/claude");
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const { ChatSession } = require("./lib/chat");
 const { TOOLS, AUTO_ALLOWED, describeDenial } = require("./lib/permissions");
 const { ScreenMemory } = require("./lib/memory");
@@ -658,7 +658,7 @@ ipcMain.handle("get-settings", () => {
   return {
     theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys, modes: getModes(), activeMode: activeMode().id,
     memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", auth: authStatus(),
-    openAtLogin: app.getLoginItemSettings(loginItemArgs()).openAtLogin,
+    openAtLogin: getOpenAtLogin(),
     panels: panelList(), building, version: app.getVersion(),
   };
 });
@@ -667,7 +667,7 @@ ipcMain.handle("set-setting", (_e, key, value) => {
   if (key === "memoryEnabled" || key === "autoScan" || key === "notesSync") saveConfig({ [key]: !!value });
   else if (key === "autoAllow" && Array.isArray(value)) { saveConfig({ autoAllow: value.map(String) }); chat.warm(); }
   else if (key === "chatSpeed" && CHAT_SPEEDS[value]) { saveConfig({ chatSpeed: value }); chat.warm(); }
-  else if (key === "openAtLogin") app.setLoginItemSettings({ ...loginItemArgs(), openAtLogin: !!value });
+  else if (key === "openAtLogin") setOpenAtLogin(!!value);
   else return false;
   buildTray();
   return true;
@@ -691,9 +691,49 @@ ipcMain.handle("reset-positions", () => {
   return true;
 });
 
-function loginItemArgs() {
-  // When run unpackaged (electron.exe <folder>), Windows needs the folder as an argument to start the right app.
-  return app.isPackaged ? {} : { path: process.execPath, args: [app.getAppPath()] };
+// Start at sign-in: a "Cloak" value under HKCU\...\Run. Electron's setLoginItemSettings leaves paths with spaces
+// unquoted (so Windows can't start it) and can't read its own entry back, so Cloak writes and reads the value itself.
+const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const APPROVED_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+const RUN_NAME = "Cloak";
+const LEGACY_RUN_NAME = "electron.app.Electron"; // what earlier versions wrote when run unpackaged
+
+function loginCommand() {
+  // Unpackaged (electron.exe <folder>), Windows needs the folder as an argument to start the right app.
+  return app.isPackaged ? `"${process.execPath}"` : `"${process.execPath}" "${app.getAppPath()}"`;
+}
+function reg(...args) {
+  return execFileSync("reg.exe", args, { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+}
+function readReg(key, name) {
+  try { return reg("query", key, "/v", name).match(/REG_\w+\s+(.*)/)?.[1].trim() ?? null; } catch { return null; }
+}
+function deleteReg(key, name) {
+  try { reg("delete", key, "/v", name, "/f"); } catch {}
+}
+function getOpenAtLogin() {
+  if (readReg(RUN_KEY, RUN_NAME) === null) return false;
+  // Turned off in Task Manager's Startup apps: the first byte is odd (03) when disabled.
+  const approved = readReg(APPROVED_KEY, RUN_NAME);
+  return !approved || !(parseInt(approved.slice(0, 2), 16) & 1);
+}
+function setOpenAtLogin(on) {
+  deleteReg(APPROVED_KEY, RUN_NAME); // clears a Task Manager "disabled" so turning it on here really turns it on
+  if (on) {
+    try { writeRunValue(); } catch (e) { console.error("start at sign-in:", e.message); }
+  } else deleteReg(RUN_KEY, RUN_NAME);
+}
+function writeRunValue() {
+  reg("add", RUN_KEY, "/v", RUN_NAME, "/t", "REG_SZ", "/d", loginCommand(), "/f");
+}
+// On launch: replace the old unquoted entry, and point an existing entry at this copy if the folder moved or was renamed.
+function syncLoginItem() {
+  if (process.env.CLOAK_DATA_DIR || process.env.OVERCLAUDE_DATA_DIR) return; // test or portable profile: leave it alone
+  const legacy = readReg(RUN_KEY, LEGACY_RUN_NAME);
+  const hadLegacy = !!legacy && /cloak|overclaude|claude-overlay/i.test(legacy);
+  if (hadLegacy) deleteReg(RUN_KEY, LEGACY_RUN_NAME);
+  const current = readReg(RUN_KEY, RUN_NAME);
+  if ((current !== null || hadLegacy) && current !== loginCommand()) writeRunValue();
 }
 
 function panelList() {
@@ -1032,6 +1072,7 @@ function buildTray() {
 
 // ---------- startup ----------
 app.whenReady().then(() => {
+  try { syncLoginItem(); } catch {}
   fs.mkdirSync(workDir(), { recursive: true });
   fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), SYSTEM + modePrompt(activeMode()));
   clearChatScreenshots();

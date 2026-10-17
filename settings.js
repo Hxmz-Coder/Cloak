@@ -318,7 +318,10 @@ document.addEventListener("keydown", async (e) => {
 });
 
 // ---------- general ----------
-$("openAtLogin").onchange = () => ov.setSetting("openAtLogin", $("openAtLogin").checked);
+$("openAtLogin").onchange = async () => {
+  await ov.setSetting("openAtLogin", $("openAtLogin").checked);
+  $("openAtLogin").checked = (await ov.getSettings()).openAtLogin; // show what Windows actually has
+};
 
 // ---------- modes ----------
 let scModeId = null;      // which mode's shortcut buttons the Shortcut buttons page is editing
