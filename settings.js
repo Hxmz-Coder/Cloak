@@ -183,12 +183,23 @@ function setBuilding(on, msg) {
   tick();
   buildTimer = setInterval(tick, 1000);
 }
-ov.onBuildProgress((msg) => { if (msg) setBuilding(true, msg); });
+let ownBuild = false; // this page started the build and shows its result itself
+ov.onBuildProgress((msg) => {
+  if (msg) { S.building = true; return setBuilding(true, msg); }
+  // null: the build is over (S.building could otherwise be stale from a refresh during it and restart the spinner)
+  S.building = false;
+  if (!ownBuild) { buildStarted = 0; setBuilding(false); }
+});
 
 async function build(request, id) {
   buildStarted = Date.now();
+  ownBuild = true;
   setBuilding(true, id ? "Claude is changing the widget…" : "Claude is designing and coding your widget…");
-  const r = await ov.buildWidget({ request, id });
+  let r;
+  try { r = await ov.buildWidget({ request, id }); }
+  catch (err) { r = { ok: false, error: String(err.message || err) }; }
+  ownBuild = false;
+  S.building = false;
   buildStarted = 0;
   if (!r.ok) { setBuilding(false, `<span class="err">${esc(r.error)}</span>`); return false; }
   setBuilding(false, `<span class="ok">${id ? "Updated" : "Added"} "${esc(r.widget.name)}". It's open on your screen now.</span>`);

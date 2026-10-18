@@ -874,7 +874,7 @@ ipcMain.handle("widget-build", async (_e, { request, id }) => {
     let prompt = buildPrompt(String(request).trim(), existing);
     for (let attempt = 1; attempt <= 2; attempt++) {
       progress(attempt === 1 ? (id ? "Claude is changing the widget…" : "Claude is designing and coding your widget…") : "Fixing a problem in the code…");
-      const res = await runClaude({ cwd: workDir(), prompt, tools: "", jsonSchema: BUILD_SCHEMA, effort: "high", persist: false }).done;
+      const res = await runClaude({ cwd: workDir(), prompt, tools: "", jsonSchema: BUILD_SCHEMA, effort: "high", persist: false, timeoutMs: 10 * 60_000 }).done;
       if (res.error) return { ok: false, error: friendlyError(res.error) };
       if (res.json.is_error) return { ok: false, error: friendlyError(res.json.result) };
       let build = res.json.structured_output;
@@ -890,11 +890,11 @@ ipcMain.handle("widget-build", async (_e, { request, id }) => {
       const meta = widgets.save({ ...build, request: fullRequest }, id);
       if (id) panels[id]?.reload();
       else showPanel(meta.id);
-      progress("");
       return { ok: true, widget: meta, panels: panelList() };
     }
   } finally {
     building = false;
+    progress(null); // build over: lets a Settings page that didn't start it (or reloaded mid-build) stop its spinner
   }
 });
 
