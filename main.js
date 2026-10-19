@@ -11,6 +11,7 @@ const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
 const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widgets");
 const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
+const { DEFAULT_NOTIFY, NotifyState, taskNotifications } = require("./lib/notify");
 
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -54,7 +55,7 @@ Notes: the user keeps personal notes in a notes widget. They are the user's own 
 Style: concise and direct. Use short markdown (bullets, code blocks) when it helps.`;
 
 // Main widget sizes (include a little transparent margin for the shadow). The pill's width follows its content.
-const WIDGET = { pill: [160, 58], bar: [680, 150], chat: [680, 620], edit: [680, 400] };
+const WIDGET = { pill: [160, 58], bar: [680, 150], chat: [680, 620], edit: [680, 400], notify: [420, 110] };
 
 // Panels: hidden until Ctrl+Shift+Space, movable and resizable, reopen where you left them.
 // Custom widgets Claude builds become panels too. Settings is a panel that only opens when you ask.
@@ -151,6 +152,7 @@ function placeWidget(mode, size) {
   let [w, h] = WIDGET[mode] || WIDGET.pill;
   if (mode === "bar" && size) h = Math.min(size, 360);
   if (mode === "pill" && size) w = Math.max(56, Math.min(size, 560));
+  if (mode === "notify" && size) h = Math.max(70, Math.min(size, 240));
   const { workArea } = screen.getPrimaryDisplay();
   const pos = loadConfig().pill.position;
   const x = pos === "left" ? workArea.x + 12 : pos === "right" ? workArea.x + workArea.width - w - 12 : workArea.x + (workArea.width - w) / 2;
@@ -161,7 +163,7 @@ function makeWindow(file, size) {
   const win = new BrowserWindow({
     width: size[0], height: size[1], frame: false, transparent: true, resizable: false, // no native resize edge; panels resize from their own grip
     alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false,
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true },
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, autoplayPolicy: "no-user-gesture-required" }, // notification chime
   });
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true);
@@ -211,8 +213,11 @@ function showWidget(focus) {
 function focusWidget() { showWidget(true); }
 
 // ---------- panels (tasks, notes, settings, custom widgets) ----------
+// Tasks and Notes can be changed by Claude: its version lives in widgets/tasks (or notes) and takes over the panel.
+const EDITABLE_BUILTINS = new Set(["tasks", "notes"]);
+const isCustomized = (name) => EDITABLE_BUILTINS.has(name) && !!widgets?.meta(name);
 function panelSpec(name) {
-  if (PANELS[name]) return PANELS[name];
+  if (PANELS[name] && !isCustomized(name)) return PANELS[name];
   const meta = widgets.meta(name);
   return meta && { custom: true, size: meta.size, min: [220, 150], label: meta.name };
 }
@@ -252,15 +257,21 @@ function createPanel(name) {
   };
   win.on("move", remember);
   win.on("resize", remember);
+  // Closed some other way than our hide (e.g. Alt+F4): forget it, or the next click hits a destroyed window.
+  const wcId = win.webContents.id;
+  win.on("closed", () => {
+    widgetIdBySender.delete(wcId);
+    if (panels[name] === win) { delete panels[name]; notifyPanels(); }
+  });
   panels[name] = win;
   return win;
 }
 function destroyPanel(name) {
   const win = panels[name];
   if (!win) return;
+  delete panels[name];
   widgetIdBySender.delete(win.webContents.id);
   win.destroy();
-  delete panels[name];
   notifyPanels();
 }
 // Keeps the widget buttons in the chat bar in sync (which widgets exist, which are open).
@@ -489,7 +500,10 @@ ${shots.map((s) => `${s.time}: ${s.path}`).join("\n") || "(none)"}`);
     let found = res.json.structured_output?.tasks;
     if (!found) { try { found = JSON.parse(res.json.result).tasks; } catch { found = []; } }
     const added = tasks.add(found || [], "claude");
-    if (added.length) announceTasks(added.length);
+    if (added.length && !pushNotification({ kind: "found", title: `Added ${added.length} task${added.length > 1 ? "s" : ""}`,
+      body: added.slice(0, 2).map((t) => t.title).join(", ") + (added.length > 2 ? ` +${added.length - 2} more` : ""), target: { type: "tasks", taskId: added[0].id } })) {
+      announceTasks(added.length);
+    }
     if (notesText) notesScannedText = notesText;
     return { added: added.map((t) => t.title) };
   } finally {
@@ -510,6 +524,84 @@ function autoScan() {
 function announceTasks(n) { widget?.webContents.send("tasks-added", n); }
 function broadcast(ch, data) {
   for (const w of [widget, ...Object.values(panels)]) if (w && !w.isDestroyed()) w.webContents.send(ch, data);
+}
+
+// ---------- notifications ----------
+// They pop out of the top widget (renderer.js). Clicking one opens where it came from (its target).
+const NOTIFY_SETTING = { deadline: "deadlines", checkin: "checkins", digest: "digest", answer: "answers", approval: "answers", found: "found", widget: "widgets" };
+const notifyCfg = () => ({ ...DEFAULT_NOTIFY, ...loadConfig().notify });
+const shownNotes = new Map(); // id -> notification on screen or waiting
+let notifySeq = 0, notifyState = null, shownForNotify = false;
+// Returns true if it will be shown (false when that kind is off or notifications are paused).
+function pushNotification(n) {
+  const cfg = notifyCfg();
+  const setting = NOTIFY_SETTING[n.kind];
+  if (!n.test && (!cfg.enabled || cfg.pausedUntil > Date.now() || (setting && !cfg[setting]))) return false;
+  if (!widget || widget.isDestroyed()) return false;
+  const id = `n${++notifySeq}`;
+  shownNotes.set(id, { ...n, id });
+  if (shownNotes.size > 50) shownNotes.delete(shownNotes.keys().next().value);
+  // The top widget is hidden: show it just for the notification (it hides again afterwards).
+  if (!widget.isVisible()) { shownForNotify = true; widget.showInactive(); }
+  const { target, ...shown } = n;
+  widget.webContents.send("notify", { ...shown, id, sound: cfg.sound, time: Date.now() });
+  return true;
+}
+function checkTaskNotifications() {
+  const cfg = notifyCfg();
+  if (!cfg.enabled || cfg.pausedUntil > Date.now()) return;
+  const due = taskNotifications(tasks.list(), new Date(), notifyState, cfg);
+  if (!due.length) return;
+  notifyState.save();
+  for (const n of due) pushNotification(n);
+}
+// Opens what a notification is about.
+function openTarget(t) {
+  if (!t) return;
+  if (t.type === "chat") { focusWidget(); widget.webContents.send("open-chat"); }
+  else if (t.type === "settings") openSettings(t.section);
+  else if (t.type === "panel" && panelSpec(t.name)) showPanel(t.name, true);
+  else if (t.type === "tasks") {
+    showPanel("tasks", true);
+    if (!t.taskId) return;
+    const wc = panels.tasks.webContents;
+    if (wc.isLoading()) wc.once("did-finish-load", () => wc.send("focus-task", t.taskId));
+    else wc.send("focus-task", t.taskId);
+  }
+}
+ipcMain.on("notify-open", (_e, id) => { const n = shownNotes.get(id); shownNotes.delete(id); if (n) openTarget(n.target); });
+ipcMain.on("notify-dismiss", (_e, id) => shownNotes.delete(id));
+ipcMain.on("notify-action", (_e, id, action) => {
+  const n = shownNotes.get(id);
+  shownNotes.delete(id);
+  const taskId = n?.target?.taskId;
+  if (action === "done" && taskId) tasks.update(taskId, { done: true });
+  else if (action === "snooze" && taskId) notifyState.snooze(taskId);
+  else if (action === "open" && n) openTarget(n.target);
+});
+// Nothing left to show: if the top widget was only shown for notifications, hide it again.
+ipcMain.on("notify-idle", () => {
+  if (shownForNotify && loadConfig().mainHidden && widget.isVisible()) widget.hide();
+  shownForNotify = false;
+});
+// A chat reply finished. If you weren't looking at the chat, say so.
+ipcMain.on("chat-finished", (_e, { watching, text, approvals }) => {
+  if (watching) return;
+  const preview = String(text || "").replace(/```[\s\S]*?```/g, "[code]").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
+  if (approvals) pushNotification({ kind: "approval", sticky: true, title: "Claude needs your OK", body: preview.slice(0, 120) || "Review the action in the chat.", target: { type: "chat" } });
+  else pushNotification({ kind: "answer", title: "Claude answered", body: preview.slice(0, 120) || "Your answer is ready.", target: { type: "chat" } });
+});
+ipcMain.handle("set-notify", (_e, patch) => {
+  const next = { ...notifyCfg(), ...patch };
+  saveConfig({ notify: next });
+  buildTray();
+  return next;
+});
+ipcMain.handle("notify-test", () => pushNotification({ kind: "deadline", test: true, urgent: true, title: "Biology quiz", body: "Due in 15 min · this is a test notification",
+  target: { type: "tasks" }, actions: [{ id: "open", label: "Open Tasks" }] }));
+function pauseNotifications(minutes) {
+  saveConfig({ notify: { ...notifyCfg(), pausedUntil: minutes ? Date.now() + minutes * 60_000 : 0 } });
+  buildTray();
 }
 
 // ---------- IPC ----------
@@ -658,7 +750,7 @@ ipcMain.handle("get-settings", () => {
   return {
     theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys, modes: getModes(), activeMode: activeMode().id,
     memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", auth: authStatus(),
-    openAtLogin: getOpenAtLogin(),
+    openAtLogin: getOpenAtLogin(), notify: notifyCfg(),
     panels: panelList(), building, version: app.getVersion(),
   };
 });
@@ -738,8 +830,8 @@ function syncLoginItem() {
 
 function panelList() {
   const cfg = loadConfig();
-  const list = ["tasks", "notes"].map((name) => ({ name, label: PANELS[name].label, builtin: true }));
-  for (const m of widgets.list()) list.push({ name: m.id, label: m.name, description: m.description, builtin: false, canUndo: widgets.canUndo(m.id), updated: m.updated });
+  const list = ["tasks", "notes"].map((name) => ({ name, label: PANELS[name].label, builtin: true, customized: isCustomized(name), canUndo: isCustomized(name) && widgets.canUndo(name) }));
+  for (const m of widgets.list().filter((w) => !PANELS[w.id])) list.push({ name: m.id, label: m.name, description: m.description, builtin: false, canUndo: widgets.canUndo(m.id), updated: m.updated });
   return list.map((p) => ({ ...p, enabled: cfg.panelEnabled[p.name] !== false, visible: !!panels[p.name]?.isVisible() }));
 }
 ipcMain.handle("panel-enabled", (_e, name, on) => {
@@ -857,6 +949,20 @@ ipcMain.handle("widget-delete", (_e, id) => {
   broadcast("pill-changed", loadConfig().pill);
   return panelList();
 });
+// Back to the built-in Tasks or Notes (your tasks and notes themselves aren't touched).
+ipcMain.handle("widget-restore", (_e, id) => {
+  if (!isCustomized(id)) return panelList();
+  const wasVisible = !!panels[id]?.isVisible();
+  destroyPanel(id);
+  widgets.remove(id);
+  createPanel(id);
+  if (wasVisible) showPanel(id);
+  return panelList();
+});
+function builtinSource(name) {
+  const read = (f) => { try { return fs.readFileSync(path.join(__dirname, f), "utf8"); } catch { return ""; } };
+  return { name: PANELS[name].label, html: read(PANELS[name].file), js: read(PANELS[name].file.replace(/\.html$/, ".js")) };
+}
 ipcMain.handle("widget-undo", (_e, id) => {
   if (widgets.undo(id)) panels[id]?.reload();
   return panelList();
@@ -866,11 +972,15 @@ ipcMain.handle("widget-undo", (_e, id) => {
 ipcMain.handle("widget-build", async (_e, { request, id }) => {
   if (building) return { ok: false, error: "Claude is already building a widget. Wait for it to finish." };
   if (!String(request || "").trim()) return { ok: false, error: "Describe the widget first." };
-  if (id && !widgets.meta(id)) return { ok: false, error: "That widget no longer exists." };
+  if (id && !widgets.meta(id) && !EDITABLE_BUILTINS.has(id)) return { ok: false, error: "That widget no longer exists." };
   building = true;
   const progress = (msg) => panels.settings?.webContents.send("build-progress", msg);
   try {
-    const existing = id ? { meta: widgets.meta(id), source: widgets.source(id) } : null;
+    // First change to Tasks or Notes: Claude starts from the built-in panel's code.
+    const fromBuiltin = EDITABLE_BUILTINS.has(id) && !widgets.meta(id);
+    const existing = !id ? null : fromBuiltin
+      ? { meta: { name: PANELS[id].label, request: `The built-in ${PANELS[id].label} widget` }, builtin: builtinSource(id) }
+      : { meta: widgets.meta(id), source: widgets.source(id) };
     let prompt = buildPrompt(String(request).trim(), existing);
     for (let attempt = 1; attempt <= 2; attempt++) {
       progress(attempt === 1 ? (id ? "Claude is changing the widget…" : "Claude is designing and coding your widget…") : "Fixing a problem in the code…");
@@ -887,9 +997,12 @@ ipcMain.handle("widget-build", async (_e, { request, id }) => {
       }
       if (syntaxError) return { ok: false, error: `The widget's code has an error Claude couldn't fix: ${syntaxError}` };
       const fullRequest = existing ? `${existing.meta.request}\nChange: ${request}` : request;
-      const meta = widgets.save({ ...build, request: fullRequest }, id);
-      if (id) panels[id]?.reload();
+      const meta = widgets.save({ ...build, ...(fromBuiltin ? { name: PANELS[id].label } : {}), request: fullRequest }, id);
+      if (fromBuiltin) { destroyPanel(id); showPanel(id); } // swap the built-in window for Claude's version
+      else if (id) panels[id]?.reload();
       else showPanel(meta.id);
+      // Builds take a minute or two; if you went off to do something else, tell you it's ready.
+      if (!panels.settings?.isFocused()) pushNotification({ kind: "built", title: `${meta.name} is ready`, body: id ? "Claude finished changing it." : "Claude built your new widget.", target: { type: "panel", name: meta.id } });
       return { ok: true, widget: meta, panels: panelList() };
     }
   } finally {
@@ -900,6 +1013,7 @@ ipcMain.handle("widget-build", async (_e, { request, id }) => {
 
 // The API custom widgets call (see widget-preload.js). The widget is identified by which window is calling.
 const askLog = new Map(); // widget id -> recent ask timestamps
+const widgetNotifyAt = new Map(); // widget id -> when it last popped a notification
 ipcMain.handle("widget-api", async (e, name, ...args) => {
   const id = widgetIdBySender.get(e.sender.id);
   if (!id) throw new Error("Not a widget.");
@@ -911,7 +1025,23 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
     case "tasks.add": return tasks.add([args[0] || {}], "me");
     case "tasks.update": tasks.update(String(args[0]), args[1] || {}); return true;
     case "tasks.remove": tasks.remove(String(args[0])); return true;
+    case "tasks.clearDone": tasks.clearDone(); return true;
+    case "tasks.scan": {
+      const recent = (askLog.get(id) || []).filter((t) => t > Date.now() - 3600_000);
+      if (recent.length >= 30) throw new Error("This widget has asked Claude too many times this hour.");
+      askLog.set(id, [...recent, Date.now()]);
+      return scanTasks({ activity: true, notes: true });
+    }
     case "notes.get": return readNotes();
+    // Only your Notes widget (Claude's version of it) may change your notes.
+    case "notes.set":
+      if (id !== "notes") throw new Error("Only the Notes widget can change your notes.");
+      fs.writeFileSync(notesPath(), String(args[0] ?? ""));
+      if (loadConfig().notesSync !== false) scheduleNotesSync();
+      return true;
+    case "notes.syncNow":
+      if (id !== "notes") throw new Error("Only the Notes widget can sync your notes.");
+      return syncNotes(true);
     case "pill.setStatus": {
       // A short line the widget offers for the top pill (shown if you pick it in Settings > Top widget).
       const text = args[0] == null ? "" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 60);
@@ -925,6 +1055,12 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
       const text = args[0] == null ? "" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 50);
       const minutes = Math.min(30, Math.max(1, Number(args[1]) || 10));
       widget?.webContents.send("pill-alert", { id, text, minutes });
+      // Also pop it out as a notification, at most once a minute per widget.
+      const last = widgetNotifyAt.get(id) || 0;
+      if (text && Date.now() - last > 60_000) {
+        widgetNotifyAt.set(id, Date.now());
+        pushNotification({ kind: "widget", urgent: true, title: panelSpec(id)?.label || "Widget", body: text, target: { type: "panel", name: id } });
+      }
       return true;
     }
     case "ask": {
@@ -1062,6 +1198,9 @@ function buildTray() {
     { type: "separator" },
     { label: "Screen memory", type: "checkbox", checked: cfg.memoryEnabled, click: (i) => { saveConfig({ memoryEnabled: i.checked }); buildTray(); } },
     { label: "Find tasks automatically", type: "checkbox", checked: cfg.autoScan, click: (i) => { saveConfig({ autoScan: i.checked }); buildTray(); } },
+    notifyCfg().pausedUntil > Date.now()
+      ? { label: `Resume notifications (paused until ${new Date(notifyCfg().pausedUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })})`, click: () => pauseNotifications(0) }
+      : { label: "Pause notifications for 1 hour", click: () => pauseNotifications(60) },
     { label: "Clear screen memory", click: () => memory.clear() },
     { label: "Reset \"always allow\" choices", enabled: cfg.autoAllow.length > 0, click: () => { saveConfig({ autoAllow: [] }); buildTray(); } },
     { label: "Reset widget positions", click: () => { saveConfig({ panelBounds: {} }); for (const n of Object.keys(panels)) panels[n].setBounds(defaultBounds(n)); } },
@@ -1090,6 +1229,11 @@ app.whenReady().then(() => {
   chat.warm(); // start Claude now so the first message is quick
   notesScannedText = readNotes().trim(); // only rescan notes after they change
   setInterval(autoScan, AUTO_SCAN_EVERY_MS);
+  notifyState = new NotifyState(path.join(userData(), "notify-state.json"));
+  setTimeout(checkTaskNotifications, 8000); // after the top widget has loaded
+  setInterval(checkTaskNotifications, 30_000);
+  // A paused tray label goes stale when the pause ends; refresh it now and then.
+  setInterval(() => { if (notifyCfg().pausedUntil && notifyCfg().pausedUntil < Date.now()) pauseNotifications(0); }, 60_000);
 
   widget = makeWindow("index.html", WIDGET.pill);
   placeWidget("pill");
@@ -1101,7 +1245,7 @@ app.whenReady().then(() => {
   setupWidgetSession();
   createPanel("tasks");
   createPanel("notes");
-  for (const m of widgets.list()) createPanel(m.id);
+  for (const m of widgets.list()) if (!PANELS[m.id]) createPanel(m.id); // Claude's Tasks/Notes were created just above
 
   const failed = registerHotkeys(loadConfig().hotkeys);
   if (failed.length) registerHotkeys(DEFAULT_HOTKEYS); // a saved shortcut is taken now: fall back to the defaults
@@ -1116,5 +1260,5 @@ app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat
 // Also clean up when Cloak exits without a normal quit (app.exit, a crash handler, etc.); the screen-memory
 // helper would otherwise keep the process from closing.
 process.on("exit", () => { try { memory?.stop(); chat?.kill(); } catch {} });
-module.exports = { toggleAll }; // for test scripts
+module.exports = { toggleAll, checkTaskNotifications }; // for test scripts
 app.on("window-all-closed", (e) => e.preventDefault());

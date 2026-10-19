@@ -34,6 +34,17 @@ contextBridge.exposeInMainWorld("overlay", {
   onPanelsChanged: on("panels-changed"),
   widgetsMenu: () => ipcRenderer.send("widgets-menu"),
   toggleAllPanels: () => ipcRenderer.send("toggle-all-panels"),
+  onOpenChat: on("open-chat"),
+  chatFinished: (info) => ipcRenderer.send("chat-finished", info),
+
+  // notifications (shown by the top widget)
+  onNotify: on("notify"),
+  notifyOpen: (id) => ipcRenderer.send("notify-open", id),
+  notifyDismiss: (id) => ipcRenderer.send("notify-dismiss", id),
+  notifyAction: (id, action) => ipcRenderer.send("notify-action", id, action),
+  notifyIdle: () => ipcRenderer.send("notify-idle"),
+  setNotify: (patch) => ipcRenderer.invoke("set-notify", patch),
+  testNotify: () => ipcRenderer.invoke("notify-test"),
 
   // panels (tasks, notes)
   togglePanel: (name) => ipcRenderer.send("toggle-panel", name),
@@ -53,6 +64,7 @@ contextBridge.exposeInMainWorld("overlay", {
   taskHelp: (task) => ipcRenderer.send("task-help", task),
   onTasksChanged: on("tasks-changed"),
   onScanState: on("scan-state"),
+  onFocusTask: on("focus-task"),
 
   // notes
   getNotes: () => ipcRenderer.invoke("notes-get"),
@@ -102,5 +114,6 @@ contextBridge.exposeInMainWorld("overlay", {
   buildWidget: (payload) => ipcRenderer.invoke("widget-build", payload),
   deleteWidget: (id) => ipcRenderer.invoke("widget-delete", id),
   undoWidget: (id) => ipcRenderer.invoke("widget-undo", id),
+  restoreWidget: (id) => ipcRenderer.invoke("widget-restore", id),
   onBuildProgress: on("build-progress"),
 });

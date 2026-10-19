@@ -138,10 +138,59 @@
   .hint { color: var(--muted); font-size: 12px; margin: 0; }
   .btns { display: flex; gap: 8px; margin-top: 2px; }
   .btns .right { margin-left: auto; }
+
+  /* ---------- notifications: the pill grows into a card (like an iPhone's Dynamic Island) ---------- */
+  #island { display: none; align-items: flex-start; gap: 12px; padding: 12px 14px 13px 12px; cursor: pointer; position: relative; flex-shrink: 0; }
+  body.notifying #island { display: flex; }
+  body[data-mode="notify"] .top, body[data-mode="notify"] .expanded-only { display: none !important; }
+  body[data-mode="notify"] .shell { border-radius: 24px; background: rgba(14, 13, 12, .97); animation: island-in .45s cubic-bezier(.2, 1.25, .35, 1); }
+  @keyframes island-in { 0% { transform: scale(.4, .55); opacity: .5; border-radius: 999px; } 100% { transform: none; opacity: 1; } }
+  body[data-mode="notify"].urgent .shell { animation: island-in .45s cubic-bezier(.2, 1.25, .35, 1), ring 1.4s ease-in-out .45s 3; }
+  @keyframes ring { 50% { border-color: rgba(var(--accent-rgb), .95); } }
+  body.urgent .n-icon { animation: wiggle .6s ease-in-out .5s 2; }
+  @keyframes wiggle { 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
+  /* while the chat bar is open, it drops in over the top row instead */
+  body:not([data-mode="notify"]).notifying #island { position: absolute; top: 4px; left: 6px; right: 6px; z-index: 20; border-radius: 16px;
+    background: rgba(14, 13, 12, .98); border: 1px solid rgba(var(--accent-rgb), .5); animation: drop .3s ease-out; }
+  @keyframes drop { from { transform: translateY(-110%); } to { transform: none; } }
+  .n-icon { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; flex: none;
+    background: rgba(var(--accent-rgb), .18); color: var(--accent); }
+  .n-icon svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  #island[data-kind="deadline"] .n-icon, #island[data-kind="digest"] .n-icon { background: rgba(227,184,107,.16); color: var(--warn); }
+  #island[data-kind="found"] .n-icon, #island[data-kind="built"] .n-icon { background: rgba(143,191,138,.16); color: var(--ok); }
+  .n-text { flex: 1; min-width: 0; }
+  .n-head { display: flex; align-items: baseline; gap: 8px; }
+  .n-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .n-time { font-size: 11px; color: var(--faint); flex: none; }
+  .n-body { color: var(--muted); font-size: 12.5px; line-height: 1.4; margin-top: 1px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .n-actions { display: flex; gap: 6px; margin-top: 9px; }
+  .n-actions:empty { display: none; }
+  .n-actions .btn { padding: 4px 12px; font-size: 12px; }
+  .n-close { position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; display: none; }
+  .n-close svg { width: 12px; height: 12px; }
+  #island:hover .n-close { display: grid; }
+  #island:hover .n-time { visibility: hidden; }
+  .n-more { position: absolute; left: 32px; top: 6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent);
+    color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 16px; text-align: center; }
+  .n-more:empty { display: none; }
+  .n-bar { position: absolute; left: 20px; right: 20px; bottom: 3px; height: 2px; border-radius: 2px; background: rgba(var(--accent-rgb), .5);
+    transform-origin: left; animation: shrink linear forwards; }
+  #island:hover .n-bar { animation-play-state: paused; }
+  @keyframes shrink { to { transform: scaleX(0); } }
 </style>
 </head>
 <body data-mode="pill">
 <div class="shell" id="shell">
+  <div id="island" role="alert" title="Click to open">
+    <div class="n-icon" id="nIcon"></div><span class="n-more" id="nMore"></span>
+    <div class="n-text">
+      <div class="n-head"><div class="n-title" id="nTitle"></div><span class="n-time">now</span></div>
+      <div class="n-body" id="nBody"></div>
+      <div class="n-actions" id="nActions"></div>
+    </div>
+    <button class="icon-btn n-close" id="nClose" title="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="n-bar" id="nBar"></div>
+  </div>
   <div class="top">
     <div class="logo">✳</div>
     <div class="pill-info pill-only" id="pillInfo"><span id="status"></span><span id="pillMode"></span><span id="pillExtra"></span><span class="dot"></span></div>

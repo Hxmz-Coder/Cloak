@@ -90,6 +90,20 @@ $("pWidgets").addEventListener("change", (e) => {
 });
 $("pPos").addEventListener("click", (e) => { if (e.target.dataset.v) savePill({ position: e.target.dataset.v }); });
 
+// ---------- notifications ----------
+function renderNotify() {
+  const n = S.notify;
+  document.querySelectorAll("[data-n]").forEach((el) => (el.checked = !!n[el.dataset.n]));
+  $("nKinds").style.opacity = n.enabled ? "" : ".45";
+  const paused = n.pausedUntil > Date.now();
+  $("nPaused").textContent = paused ? `Paused until ${new Date(n.pausedUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.` : "";
+  $("nPause").textContent = paused ? "Resume now" : "Pause for 1 hour";
+}
+async function saveNotify(patch) { S.notify = await ov.setNotify(patch); renderNotify(); }
+$("s-notify").addEventListener("change", (e) => { const k = e.target.dataset.n; if (k) saveNotify({ [k]: e.target.checked }); });
+$("nPause").onclick = () => saveNotify({ pausedUntil: S.notify.pausedUntil > Date.now() ? 0 : Date.now() + 3600_000 });
+$("nTest").onclick = () => ov.testNotify();
+
 // ---------- shortcut buttons ----------
 let editingSc = null; // id being edited, "new" for a new one, or null
 function scKind(sc) {
@@ -214,19 +228,25 @@ $("bBuild").onclick = async () => {
 };
 
 function renderWidgets() {
+  const tag = (p) => (!p.builtin ? '<span class="tag">made by Claude</span>' : p.customized ? '<span class="tag">changed by Claude</span>' : '<span class="tag">built-in</span>');
+  const about = (p) => (!p.builtin ? p.description : p.name === "tasks" ? "Your task list." : "Your notes; Claude can find tasks in them.");
+  const hint = (p) => (p.name === "tasks" ? "e.g. Group tasks by category, and add a progress bar for today."
+    : p.name === "notes" ? "e.g. Add a word count, and make headings bigger."
+    : "e.g. Add a button to jump to today, and color tasks by category.");
   $("wList").innerHTML = S.panels.map((p) => `
     <div class="item" data-name="${esc(p.name)}">
-      <div class="grow"><div class="t">${esc(p.label)} ${p.builtin ? '<span class="tag">built-in</span>' : '<span class="tag">made by Claude</span>'}</div>
-        <div class="d">${esc(p.builtin ? (p.name === "tasks" ? "Your task list." : "Your notes; Claude can find tasks in them.") : p.description)}</div></div>
+      <div class="grow"><div class="t">${esc(p.label)} ${tag(p)}</div>
+        <div class="d">${esc(about(p))}</div></div>
       <div class="acts">
         <button class="icon-btn" data-a="open" title="Show it now">${ICON.open}</button>
-        ${p.builtin ? "" : `<button class="btn ghost needs-idle" data-a="change">Change…</button>`}
+        <button class="btn ghost needs-idle" data-a="change">Change…</button>
         ${p.canUndo ? `<button class="btn ghost needs-idle" data-a="undo" title="Go back to the previous version">Undo</button>` : ""}
+        ${p.customized ? `<button class="btn ghost needs-idle" data-a="restore" title="Go back to the original ${esc(p.label)}. Your ${p.name === "tasks" ? "tasks" : "notes"} stay as they are.">Restore original</button>` : ""}
         ${p.builtin ? "" : `<button class="icon-btn" data-a="del" title="Delete">${ICON.del}</button>`}
         <span title="Show with the show/hide shortcut" style="margin-left:6px">${switchHtml(p.enabled, 'data-a="enabled"')}</span>
       </div>
-      ${p.builtin ? "" : `<div class="change"><textarea placeholder="What should Claude change? e.g. Add a button to jump to today, and color tasks by category."></textarea>
-        <div class="btns"><button class="btn primary needs-idle" data-a="apply">Apply change</button><button class="btn" data-a="cancel">Cancel</button></div></div>`}
+      <div class="change"><textarea placeholder="What should Claude change? ${esc(hint(p))}"></textarea>
+        <div class="btns"><button class="btn primary needs-idle" data-a="apply">Apply change</button><button class="btn" data-a="cancel">Cancel</button></div></div>
     </div>`).join("");
   if (S.building) setBuilding(true);
 }
@@ -246,6 +266,9 @@ $("wList").addEventListener("click", async (e) => {
       return;
     }
     case "undo": S.panels = await ov.undoWidget(name); break;
+    case "restore":
+      if (el.dataset.confirm !== "1") { el.dataset.confirm = "1"; el.textContent = "Click again to restore"; return; }
+      S.panels = await ov.restoreWidget(name); break;
     case "del":
       if (el.dataset.confirm !== "1") { el.dataset.confirm = "1"; el.title = "Click again to delete"; el.style.color = "#ff9b8a"; return; }
       S.panels = await ov.deleteWidget(name); break;
@@ -445,7 +468,7 @@ $("rerunSetup").onclick = () => ov.openWelcome("welcome");
 async function refresh() {
   S = await ov.getSettings();
   syncShortcutMode();
-  renderAppearance(); renderTop(); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
+  renderAppearance(); renderTop(); renderNotify(); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
   $("openAtLogin").checked = S.openAtLogin;
   $("notesSync").checked = S.notesSync;
   $("pShowMode").checked = S.pill.showMode !== false;

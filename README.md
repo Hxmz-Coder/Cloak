@@ -4,7 +4,7 @@ A customizable Claude overlay for your Windows desktop. It adds a small widget a
 
 It runs Claude through the [Claude Code](https://code.claude.com) CLI, using either **your Claude subscription** (Pro or Max, with no extra cost) or **your own Anthropic API key** (pay per use). A setup guide walks you through either one.
 
-**v1.0.2**
+**v1.1.0**
 
 ## Features
 
@@ -17,7 +17,8 @@ It runs Claude through the [Claude Code](https://code.claude.com) CLI, using eit
 - **Screen memory.** *What did I just do?* recaps your last half hour, using the window history and screenshots kept on your PC.
 - **Tasks** with due dates and times. Add them yourself, or let Claude add them from your notes, your chats, or your recent activity.
 - **Notes.** A plain notepad that saves as you type. A few seconds after you stop typing, any to-dos in it are added to your Tasks automatically. Your notes never change.
-- **Custom widgets.** In Settings, go to Widgets, describe a widget, and Claude codes and installs it (a calendar, focus timer, habit tracker and so on). You can ask Claude to change it later, or undo a change. Widgets (and Tasks and Notes) can be moved, and resized from any edge. Every widget gets a button in the chat bar. When you have more than four, the rest go in a folder, and one button opens or hides all of them.
+- **Notifications.** Like an iPhone's Dynamic Island, the top widget grows into a card to get your attention, even when it's hidden. It never takes the keyboard from what you're typing. You get a heads-up an hour and 15 minutes before a task's time, a check-in after the time passes ("Did you finish it?" with **Yes, done** and **Not yet** buttons), a 9 AM summary of what's due today and overdue, a 6 PM heads-up for tomorrow, and a notice when Claude's answer is ready or it needs your OK. You also hear when Claude finds new tasks, when a widget finishes building, and when a widget has something happening now. Click a notification to go straight to where it came from. Turn each kind on or off, mute the chime, or pause everything for an hour in **Settings, Notifications** (or from the tray icon).
+- **Custom widgets.** In Settings, go to Widgets, describe a widget, and Claude codes and installs it (a calendar, focus timer, habit tracker and so on). You can ask Claude to change it later, or undo a change. Claude can change the built-in **Tasks** and **Notes** too. Its version takes their place, and **Restore original** brings the built-in one back. Your tasks and notes stay as they are either way. Widgets (and Tasks and Notes) can be moved, and resized from any edge. Every widget gets a button in the chat bar. When you have more than four, the rest go in a folder, and one button opens or hides all of them.
 - **Settings.** Accent color, opacity, top-widget style, modes, shortcut buttons, widgets, chat speed, privacy, sign-in method, keyboard shortcuts, and starting with Windows.
 
 ## Requirements
@@ -33,9 +34,21 @@ It runs Claude through the [Claude Code](https://code.claude.com) CLI, using eit
 
 ## Run it
 
+**Without git (easiest, good for testers):**
+
+1. Install [Node.js](https://nodejs.org) (the LTS version; click through the installer with the defaults).
+2. Go to [github.com/Hxmz-Coder/Cloak](https://github.com/Hxmz-Coder/Cloak), click **Code**, then **Download ZIP**.
+3. Right-click the ZIP, choose **Extract All**, and open the extracted folder.
+4. Double-click **start.bat**. The first time takes a minute or two while it downloads what it needs. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
+5. The setup guide opens. It installs Claude Code if needed and helps you sign in with your Claude account (Pro or Max) or an API key.
+
+After that, double-click `start.bat` to open Cloak, or turn on **Settings, General, Start when I sign in to Windows**.
+
+**With git:**
+
 ```powershell
-git clone https://github.com/Hxmz-Coder/overclaude.git
-cd overclaude
+git clone https://github.com/Hxmz-Coder/Cloak.git
+cd Cloak
 start.bat          # installs what it needs the first time, then starts
 ```
 
@@ -61,7 +74,7 @@ If `claude` isn't on your PATH, set `CLAUDE_CLI_PATH` to its full path. With the
 
 - Screen memory, notes, tasks and chat history are stored only in `%APPDATA%\cloak`. Claude sees them only when you ask for a recap or a task scan, or when a task scan runs automatically (you can turn that off in Settings).
 - In chat, Claude can read files in your user folder and search the web without asking. Everything else needs your approval.
-- Custom widgets run **sandboxed**: no Node.js, no network, and no file access. They only get a small API: their own storage, your tasks, read-only notes, asking Claude, and a status line for the top widget.
+- Custom widgets run **sandboxed**: no Node.js, no network, and no file access. They only get a small API: their own storage, your tasks, read-only notes, asking Claude, and a status line and alerts for the top widget. Only Claude's version of your Notes widget can change your notes.
 
 ## Building widgets by hand
 
@@ -78,6 +91,7 @@ Claude-built widgets live in `%APPDATA%\cloak\widgets\<id>\`. `source.json` hold
 | `lib/permissions.js` | What runs without asking, and the approval cards |
 | `lib/memory.js` | Screen memory (window history and screenshots) |
 | `lib/tasks.js` | The task list |
+| `lib/notify.js` | When to notify you (deadlines, check-ins, daily summary), remembered across restarts |
 | `lib/widgets.js` | The custom widget store, the builder prompt, and the sandboxed page template |
 | `index.html` / `renderer.js` | The top widget and chat bar |
 | `tasks.*`, `notes.*`, `settings.*`, `welcome.*` | The built-in panels and the setup guide |
@@ -104,3 +118,9 @@ Set `CLOAK_DATA_DIR` to keep data in a different folder, for example for testing
 Every window and console error is recorded, and so is every answer Claude gives. Reports go to `tests/results/`. To run one scenario several times, use `npm run test:new-user -- student x3`.
 
 These tests make real Claude requests, so they use some of your plan's usage.
+
+## Tests
+
+`npm run test:new-user` runs every scenario, each in a fresh throwaway profile; your own data is never touched. Most scenarios make real Claude calls on your account. The test windows open off-screen and never take focus, so you can keep working while they run. Set `CLOAK_TEST_VISIBLE=1` to watch them instead.
+
+To check how the top widget and Settings look without starting the app, run `node tests/preview/serve.js` and open http://localhost:4173. You can send each kind of notification from there.

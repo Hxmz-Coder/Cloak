@@ -4,6 +4,7 @@ const body = document.body;
 let tasks = [];
 let showDone = false;
 let editingTask = null; // task whose day/time editor is open (kept open across re-renders)
+let focusId = null;      // task a notification pointed at: highlighted for a few seconds
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const ICON_ASK = '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>';
@@ -89,6 +90,7 @@ function row(t) {
   };
   el.querySelector(".e-clear").onclick = () => { editingTask = null; window.overlay.updateTask(t.id, { due: null, time: null }); };
   if (editingTask === t.id) el.classList.add("editing");
+  if (focusId === t.id) el.classList.add("focus");
   return el;
 }
 
@@ -116,6 +118,16 @@ function render() {
 }
 
 window.overlay.onTasksChanged((list) => { tasks = list; render(); });
+// A notification was clicked: show that task.
+window.overlay.onFocusTask((id) => {
+  const t = tasks.find((x) => x.id === id);
+  if (!t) return;
+  if (t.done) showDone = true;
+  focusId = id;
+  render();
+  document.querySelector(".task.focus")?.scrollIntoView({ block: "center" });
+  setTimeout(() => { focusId = null; document.querySelector(".task.focus")?.classList.remove("focus"); }, 4000);
+});
 window.overlay.onPanelShown(render);
 
 $("newTask").addEventListener("keydown", async (e) => {

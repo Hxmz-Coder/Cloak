@@ -16,6 +16,23 @@ const profile = path.join(os.tmpdir(), `cloak-test-${scenario}-${Date.now()}`);
 process.env.CLOAK_DATA_DIR = profile;
 const outDir = process.env.CLOAK_TEST_OUT || path.join(__dirname, "results");
 fs.mkdirSync(outDir, { recursive: true });
+// Quiet test profile: no notification sounds.
+fs.mkdirSync(profile, { recursive: true });
+fs.writeFileSync(path.join(profile, "config.json"), JSON.stringify({ notify: { sound: false } }));
+
+// Test windows open far off-screen and never take focus, so a run doesn't get in the way of whatever you're
+// doing on this PC. Positions read back as if on-screen. CLOAK_TEST_VISIBLE=1 shows them normally, to watch a run.
+if (process.env.CLOAK_TEST_VISIBLE !== "1") {
+  const OFF = -20000;
+  const P = BrowserWindow.prototype;
+  const { setBounds, getBounds, setPosition, getPosition } = P;
+  P.setBounds = function (b, ...r) { return setBounds.call(this, b && b.x !== undefined ? { ...b, x: b.x + OFF } : b, ...r); };
+  P.getBounds = function () { const b = getBounds.call(this); return { ...b, x: b.x - OFF }; };
+  P.setPosition = function (x, y, ...r) { return setPosition.call(this, x + OFF, y, ...r); };
+  P.getPosition = function () { const [x, y] = getPosition.call(this); return [x - OFF, y]; };
+  P.show = function () { return this.showInactive(); };
+  P.focus = function () {};
+}
 
 const results = [];
 const errors = [];
@@ -29,7 +46,8 @@ app.on("web-contents-created", (_e, wc) => {
   wc.on("render-process-gone", (_ev, d) => errors.push(`${wc.getTitle()}: renderer crashed (${d.reason})`));
 });
 
-const { toggleAll } = require("../main.js");
+const { toggleAll, checkTaskNotifications } = require("../main.js");
+const { taskNotifications, NotifyState, DEFAULT_NOTIFY } = require("../lib/notify");
 
 // ---------- helpers ----------
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -123,6 +141,115 @@ const SCENARIOS = {
     check("panel resizes", b1.width === b0.width + 50 && b1.height === b0.height + 40, JSON.stringify([b0, b1]));
     s.webContents.executeJavaScript(`window.overlay.resizePanel(300, 300)`); await wait(300);
     check("settings can't be resized", s.getBounds().width === 800);
+
+    // A widget closed some other way (e.g. Alt+F4) opens again on the next click.
+    t.close(); await wait(600);
+    ipcMain.emit("toggle-panel", {}, "tasks"); await wait(1500);
+    const t2 = await win("Claude Tasks");
+    check("a closed widget reopens when clicked", t2 && !t2.isDestroyed() && t2.isVisible());
+  },
+
+  // Notifications from the top widget: deadlines, check-ins, answers. No Claude answers needed.
+  async "notifications"() {
+    await call("welcome-done", { profile: {}, mode: "general" });
+    const w = await win("Claude Widget");
+    const pad = (n) => String(n).padStart(2, "0");
+    const hm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const dayOf = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const inMin = (m) => new Date(Date.now() + m * 60_000);
+    const island = () => js(w, `return { on: document.body.classList.contains("notifying"), mode: document.body.dataset.mode, title: document.getElementById("nTitle").textContent, body: document.getElementById("nBody").textContent, more: document.getElementById("nMore").textContent, acts: [...document.querySelectorAll("#nActions [data-act]")].map(b => b.dataset.act) }`);
+    const clear = async () => { for (let i = 0; i < 6 && (await island()).on; i++) { await js(w, `document.getElementById("nClose").click(); return 1`); await wait(300); } };
+    w.webContents.send("collapse"); await wait(500);
+
+    // The rules, with a fake clock (no waiting).
+    const st = new NotifyState(path.join(profile, "rules-test.json"));
+    const CFG = { ...DEFAULT_NOTIFY, digest: false }; // the daily summary has its own checks below
+    const base = new Date(2026, 9, 20, 14, 0);
+    const T = (min, extra = {}) => { const due = new Date(base.getTime() + min * 60_000); return { id: "x" + min, title: `Task ${min}`, done: false, due: dayOf(due), time: hm(due), ...extra }; };
+    let r = taskNotifications([T(45)], base, st, CFG);
+    check("rule: 1 hour heads-up", r.length === 1 && /Due in 45 min/.test(r[0].body), JSON.stringify(r));
+    r = taskNotifications([T(45)], base, st, CFG);
+    check("rule: not shown twice", r.length === 0, JSON.stringify(r));
+    r = taskNotifications([T(10)], base, st, CFG);
+    check("rule: starting late shows only the latest stage", r.length === 1 && /Due in 10 min/.test(r[0].body) && r[0].urgent, JSON.stringify(r));
+    r = taskNotifications([T(-45)], base, st, CFG);
+    check("rule: check-in after the time passes", r.length === 1 && r[0].kind === "checkin" && r[0].actions.length === 2, JSON.stringify(r));
+    st.snooze("x-45", 30);
+    const snoozedUntil = st.snoozedUntil("x-45");
+    check("rule: snoozed check-in waits", taskNotifications([T(-45)], new Date(snoozedUntil - 60_000), st, CFG).length === 0);
+    const later = new Date(snoozedUntil + 60_000);
+    const backAgain = taskNotifications([{ ...T(-45), due: dayOf(later), time: hm(new Date(later.getTime() - 40 * 60_000)) }], later, st, CFG);
+    check("rule: snoozed check-in comes back", backAgain.some((x) => x.kind === "checkin"), JSON.stringify(backAgain));
+    check("rule: moving a task re-arms it", taskNotifications([{ ...T(45), time: "14:50" }], base, st, CFG).length === 1);
+    const morning = new Date(2026, 9, 21, 9, 5);
+    r = taskNotifications([{ id: "d1", title: "Essay", due: "2026-10-21", done: false }, { id: "d2", title: "Old one", due: "2026-10-19", done: false }], morning, st, DEFAULT_NOTIFY);
+    check("rule: morning summary of today and overdue", r.length === 1 && /1 task due today/.test(r[0].title) && /1 overdue/.test(r[0].body), JSON.stringify(r));
+    r = taskNotifications([{ id: "d3", title: "Quiz", due: "2026-10-22", done: false }], new Date(2026, 9, 21, 18, 10), st, DEFAULT_NOTIFY);
+    check("rule: evening heads-up for tomorrow", r.length === 1 && /Due tomorrow/.test(r[0].title), JSON.stringify(r));
+    check("rule: switched-off kinds stay quiet", taskNotifications([T(30, { id: "q" })], base, st, { ...CFG, deadlines: false }).length === 0);
+
+    // Real notifications in the top widget (the daily summary would also fire, depending on the time of day).
+    await call("set-notify", { digest: false });
+    const soon = inMin(10);
+    await call("tasks-add", { title: "Dentist", category: "other", due: dayOf(soon), time: hm(soon) });
+    checkTaskNotifications(); await wait(900);
+    let n = await island();
+    check("deadline pops out of the pill", n.on && n.mode === "notify" && n.title === "Dentist" && /Due in (9|10) min/.test(n.body), JSON.stringify(n));
+    check("the pill grows into a card", w.getBounds().width >= 400 && w.getBounds().height >= 80, JSON.stringify(w.getBounds()));
+    await js(w, `document.getElementById("island").click(); return 1`); await wait(1500);
+    const tp = await win("Claude Tasks");
+    check("clicking it opens Tasks at that task", tp.isVisible() && (await js(tp, `return document.querySelector(".task.focus .t")?.textContent`)) === "Dentist");
+    check("the pill shrinks back afterwards", (await island()).on === false && (await js(w, `return document.body.dataset.mode`)) !== "notify");
+
+    const past = inMin(-45);
+    await call("tasks-add", { title: "Return library book", category: "other", due: dayOf(past), time: hm(past) });
+    checkTaskNotifications(); await wait(900);
+    n = await island();
+    check("check-in asks if you finished", n.on && /Did you finish "Return library book"/.test(n.title) && n.acts.join() === "done,snooze", JSON.stringify(n));
+    await js(w, `document.querySelector('#nActions [data-act="done"]').click(); return 1`); await wait(600);
+    check("'Yes, done' marks the task done", (await call("tasks-list")).find((x) => x.title === "Return library book")?.done === true);
+
+    // Answers: only when you're not looking at the chat.
+    ipcMain.emit("chat-finished", {}, { watching: false, text: "The capital of **France** is Paris.", approvals: 0 }); await wait(800);
+    n = await island();
+    check("answer-ready notification with a preview", n.on && n.title === "Claude answered" && n.body === "The capital of France is Paris.", JSON.stringify(n));
+    await js(w, `document.getElementById("island").click(); return 1`); await wait(800);
+    check("clicking it opens the chat", (await js(w, `return document.body.dataset.mode`)) === "chat");
+    ipcMain.emit("chat-finished", {}, { watching: true, text: "hi", approvals: 0 }); await wait(600);
+    check("no notification while you're reading the chat", (await island()).on === false);
+    w.webContents.send("collapse"); await wait(500);
+
+    // Several at once queue up.
+    ipcMain.emit("chat-finished", {}, { watching: false, text: "one", approvals: 1 });
+    ipcMain.emit("chat-finished", {}, { watching: false, text: "two", approvals: 0 }); await wait(700);
+    n = await island();
+    check("notifications queue (+1 waiting)", n.title === "Claude needs your OK" && n.more === "+1", JSON.stringify(n));
+    await clear();
+
+    // Hidden top widget: shown just for the notification, then hidden again.
+    ipcMain.emit("hide-widget"); await wait(400);
+    check("top widget can be hidden", !w.isVisible());
+    ipcMain.emit("chat-finished", {}, { watching: false, text: "while hidden", approvals: 0 }); await wait(800);
+    check("a notification shows even when the top widget is hidden", w.isVisible() && (await island()).on);
+    await clear(); await wait(500);
+    check("and it hides again afterwards", !w.isVisible());
+    ipcMain.emit("focus");
+
+    // Settings switches.
+    await call("set-notify", { answers: false });
+    ipcMain.emit("chat-finished", {}, { watching: false, text: "muted", approvals: 0 }); await wait(600);
+    check("a switched-off kind doesn't show", (await island()).on === false);
+    await call("set-notify", { answers: true, pausedUntil: Date.now() + 3600_000 });
+    ipcMain.emit("chat-finished", {}, { watching: false, text: "paused", approvals: 0 }); await wait(600);
+    check("pausing silences everything", (await island()).on === false);
+    await call("set-notify", { pausedUntil: 0 });
+    await call("notify-test"); await wait(700);
+    check("Settings test notification works", (await island()).on);
+    await clear();
+    ipcMain.emit("open-settings", {}, "notify"); await wait(1500);
+    const sw = await win("Claude Settings");
+    const rows = await js(sw, `return document.querySelectorAll("#s-notify [data-n]").length`);
+    check("Settings > Notifications lists its switches", rows === 8, rows);
   },
 
   // A student in Homework mode: answers checked against known results.
@@ -250,6 +377,24 @@ const SCENARIOS = {
       check("built widget shows a 25:00 timer", /25:00/.test(txt), txt.slice(0, 200));
       transcript.push({ label: "widget text", a: txt.slice(0, 400) });
     }
+
+    // Claude changes the built-in Tasks widget, then it's restored.
+    await call("tasks-add", { title: "Finish poster", category: "homework", due: iso(0) });
+    const t1 = Date.now();
+    const c = await call("widget-build", { request: "Add a line at the top that says how many tasks are due today, like '1 due today'.", id: "tasks" });
+    check(`Claude changes the Tasks widget (${Math.round((Date.now() - t1) / 1000)}s)`, c.ok && c.panels.find((p) => p.name === "tasks")?.customized, c.error || JSON.stringify(c.panels));
+    if (c.ok) {
+      await wait(2500);
+      const tw = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().startsWith("overlay://widget/tasks/"));
+      const txt = tw ? await js(tw, `return document.getElementById("app").innerText`) : "";
+      check("changed Tasks shows your tasks and the new line", /Finish poster/.test(txt) && /1\s+due today/i.test(txt), txt.slice(0, 300));
+      const errs = tw ? await js(tw, `return [...document.querySelectorAll(".widget-error")].map(e => e.textContent).join(" | ")`) : "no window";
+      check("changed Tasks loads without errors", !errs, errs);
+      transcript.push({ label: "changed tasks text", a: txt.slice(0, 400) });
+      const back = await call("widget-restore", "tasks");
+      await wait(1500);
+      check("Restore original brings back the built-in Tasks", !back.find((p) => p.name === "tasks").customized && !!(await win("Claude Tasks")));
+    }
   },
 
   // Sign-in errors and odd input.
@@ -280,7 +425,7 @@ const SCENARIOS = {
     check("new chat forgets the old conversation", r.ok && /\bno\b/i.test(r.text), r.text);
   },
 };
-function SCENARIO_NAMES() { return ["first-run", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
+function SCENARIO_NAMES() { return ["first-run", "notifications", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
 
 // ---------- run ----------
 app.whenReady().then(async () => {

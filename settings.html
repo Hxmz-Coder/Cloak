@@ -110,6 +110,7 @@
     <nav id="nav">
       <button data-s="appearance">Appearance</button>
       <button data-s="top">Top widget</button>
+      <button data-s="notify">Notifications</button>
       <button data-s="modes">Modes</button>
       <button data-s="shortcuts">Shortcut buttons</button>
       <button data-s="widgets">Widgets</button>
@@ -159,6 +160,25 @@
         <div class="row"><div class="grow"><div class="t">Show the active mode</div><div class="d">A small tag like "Homework" when you're not in General.</div></div><label class="switch"><input type="checkbox" id="pShowMode"><span></span></label></div>
         <h3>Position</h3>
         <div class="seg" id="pPos"><button data-v="left">Left</button><button data-v="center">Center</button><button data-v="right">Right</button></div>
+      </section>
+
+      <!-- Notifications -->
+      <section id="s-notify">
+        <h2>Notifications</h2>
+        <p class="lead">They pop out of the top widget so you notice them, even when it's hidden. Click one to go straight to what it's about. They never take the keyboard away from what you're typing.</p>
+        <div class="row"><div class="grow"><div class="t">Show notifications</div></div><label class="switch"><input type="checkbox" data-n="enabled"><span></span></label></div>
+        <p class="hint" id="nPaused" style="margin:4px 0 0"></p>
+        <div id="nKinds">
+        <h3>Tell me about</h3>
+        <div class="row"><div class="grow"><div class="t">Deadlines coming up</div><div class="d">An hour and 15 minutes before a task's time, and when it's due.</div></div><label class="switch"><input type="checkbox" data-n="deadlines"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Check-ins</div><div class="d">Half an hour after a task's time: did you finish it? Mark it done, or get asked again later.</div></div><label class="switch"><input type="checkbox" data-n="checkins"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Daily summary</div><div class="d">At 9 AM, what's due today and what's overdue. At 6 PM, what's due tomorrow.</div></div><label class="switch"><input type="checkbox" data-n="digest"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Answers and approvals</div><div class="d">When Claude finishes answering, or needs your OK, while you're doing something else.</div></div><label class="switch"><input type="checkbox" data-n="answers"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">New tasks</div><div class="d">When Claude finds tasks in your notes or what you've been doing.</div></div><label class="switch"><input type="checkbox" data-n="found"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Widget alerts</div><div class="d">When one of your widgets has something happening now, like a timer finishing.</div></div><label class="switch"><input type="checkbox" data-n="widgets"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Play a sound</div></div><label class="switch"><input type="checkbox" data-n="sound"><span></span></label></div>
+        </div>
+        <div class="btns" style="margin-top:12px"><button class="btn" id="nTest">Send a test notification</button><button class="btn ghost" id="nPause">Pause for 1 hour</button></div>
       </section>
 
       <!-- Modes -->

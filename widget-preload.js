@@ -16,8 +16,17 @@ contextBridge.exposeInMainWorld("overlay", {
     update: (id, patch) => call("tasks.update", id, patch),
     remove: (id) => call("tasks.remove", id),
     onChange: (cb) => ipcRenderer.on("tasks-changed", (_e, list) => cb(list)),
+    clearDone: () => call("tasks.clearDone"),
+    scan: () => call("tasks.scan"),
+    onFocus: (cb) => ipcRenderer.on("focus-task", (_e, id) => cb(id)),
   },
-  notes: { get: () => call("notes.get") },
+  notes: {
+    get: () => call("notes.get"),
+    // only in the Notes widget (Claude's version of it)
+    set: (text) => call("notes.set", text),
+    syncNow: () => call("notes.syncNow"),
+    onSync: (cb) => ipcRenderer.on("notes-sync", (_e, s) => cb(s)),
+  },
   pill: {
     setStatus: (text) => call("pill.setStatus", text),
     notify: (text, minutes) => call("pill.notify", text, minutes),

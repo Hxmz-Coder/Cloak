@@ -1,0 +1,77 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cloak preview</title>
+<style>
+  body { margin: 0; font: 13px "Segoe UI", system-ui, sans-serif; background: #1d2330; color: #ddd; }
+  .desk { position: relative; height: 470px; overflow: hidden;
+    background: linear-gradient(135deg, #2b4a6f, #6b4a7a 55%, #b0705a); }
+  .desk .app { position: absolute; left: 40px; right: 40px; top: 90px; bottom: 20px; background: #f4f4f4; border-radius: 8px; color: #333; padding: 16px; }
+  #top { position: absolute; top: 0; left: 50%; transform: translateX(-50%); border: 0; background: transparent; transition: width .15s, height .15s; }
+  .ctl { padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .ctl button { background: #2c3446; color: #eee; border: 1px solid #44506a; border-radius: 7px; padding: 6px 10px; cursor: pointer; }
+  #log { padding: 0 16px 16px; font: 12px Consolas, monospace; color: #9fb0c8; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="desk">
+  <div class="app"><b>Some other app you're working in</b><p>The top widget sits above everything, at the top of the screen.</p></div>
+  <iframe id="top" src="/index.html"></iframe>
+</div>
+<div class="ctl" id="ctl">
+  <button data-n="deadline">Deadline (urgent)</button>
+  <button data-n="hour">Deadline (1 hour)</button>
+  <button data-n="checkin">Check-in</button>
+  <button data-n="digest">Morning summary</button>
+  <button data-n="answer">Answer ready</button>
+  <button data-n="approval">Needs your OK</button>
+  <button data-n="found">Tasks found</button>
+  <button data-n="widget">Widget alert</button>
+  <button data-n="built">Widget built</button>
+  <button data-n="queue">Three at once</button>
+  <button id="bar">Open chat bar</button>
+  <button id="pill">Back to pill</button>
+</div>
+<div id="log"></div>
+<script>
+  // Same sizing rules as placeWidget() in main.js.
+  const WIDGET = { pill: [160, 58], bar: [680, 150], chat: [680, 620], edit: [680, 400], notify: [420, 110] };
+  const top_ = document.getElementById("top");
+  const log = (s) => { const l = document.getElementById("log"); l.textContent = (s + "\n" + l.textContent).slice(0, 3000); };
+  window.addEventListener("message", (e) => {
+    const { mock, args } = e.data || {};
+    if (!mock) return;
+    if (mock === "setMode") {
+      let [w, h] = WIDGET[args[0]] || WIDGET.pill;
+      const size = args[1];
+      if (args[0] === "bar" && size) h = Math.min(size, 360);
+      if (args[0] === "pill" && size) w = Math.max(56, Math.min(size, 560));
+      if (args[0] === "notify" && size) h = Math.max(70, Math.min(size, 240));
+      top_.style.width = w + "px"; top_.style.height = h + "px";
+    }
+    log(`${mock}(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+  });
+  let seq = 0;
+  const N = {
+    deadline: { kind: "deadline", urgent: true, title: "Dentist", body: "Due in 12 min · 3:30 PM", actions: [] },
+    hour: { kind: "deadline", title: "Chemistry lab report", body: "Due in 52 min · 4:00 PM" },
+    checkin: { kind: "checkin", sticky: true, title: 'Did you finish "Return library book"?', body: "It was due at 2:00 PM.", actions: [{ id: "done", label: "Yes, done" }, { id: "snooze", label: "Not yet" }] },
+    digest: { kind: "digest", title: "3 tasks due today", body: "Dentist, Chemistry lab report +1 more · 1 overdue" },
+    answer: { kind: "answer", title: "Claude answered", body: "The derivative of x³ + 2x is 3x² + 2. Differentiate each term: the power rule gives 3x², and 2x becomes 2." },
+    approval: { kind: "approval", sticky: true, title: "Claude needs your OK", body: "Waiting for your OK to create notes.txt." },
+    found: { kind: "found", title: "Added 3 tasks", body: "Buy poster board, Study for bio quiz +1 more" },
+    widget: { kind: "widget", urgent: true, title: "Pomodoro", body: "Focus session done. Take 5." },
+    built: { kind: "built", title: "Habit Tracker is ready", body: "Claude built your new widget." },
+  };
+  const send = (n) => top_.contentWindow.__mock.emit("onNotify", { ...n, id: "n" + ++seq, sound: true, time: Date.now() });
+  document.getElementById("ctl").addEventListener("click", (e) => {
+    const k = e.target.dataset.n;
+    if (k === "queue") { send(N.answer); send(N.deadline); send(N.found); }
+    else if (k) send(N[k]);
+  });
+  document.getElementById("bar").onclick = () => top_.contentWindow.__mock.emit("onOpenBar");
+  document.getElementById("pill").onclick = () => top_.contentWindow.__mock.emit("onCollapse");
+</script>
+</body>
+</html>

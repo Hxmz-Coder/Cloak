@@ -30,6 +30,7 @@ const THINKING = '<span class="thinking">thinking<span>.</span><span>.</span><sp
 
 // ---------- widget states: pill -> bar (hover) -> chat / edit ----------
 function setMode(m) {
+  if (m === "pill" && nCur) m = "notify"; // a notification is showing: the pill stays grown until it's done
   if (m === mode) return;
   mode = m;
   body.dataset.mode = m;
@@ -46,6 +47,7 @@ function sendSize() {
 function fit() {
   let size;
   if (mode === "pill") size = body.classList.contains("dot-style") ? 58 : Math.ceil($("pillInfo").getBoundingClientRect().width) + 64;
+  else if (mode === "notify") size = $("island").offsetHeight + 16;
   else if (mode === "bar") size = 44 + $("tiles").offsetHeight + (body.classList.contains("has-shot") ? 42 : 0) + 16;
   const key = `${mode}:${size}`;
   if (key !== lastSize) { lastSize = key; window.overlay.setMode(mode, size); }
@@ -58,7 +60,7 @@ function expand() {
   if (mode === "pill") setMode(hasChat() ? "chat" : "bar");
 }
 function collapse() {
-  if (pinned || mode === "edit" || capturing) return;
+  if (pinned || mode === "edit" || mode === "notify" || capturing) return;
   if (input.value.trim() && document.activeElement === input) return; // don't lose a half-typed question
   setMode("pill");
 }
@@ -282,7 +284,9 @@ async function turn(userHtml, call) {
   live = null;
   setBusy(false);
   showReply(el, res);
-  if (mode === "pill") { body.classList.add("unread"); updateStatus(); }
+  const watching = mode === "chat" && document.hasFocus();
+  if (!watching && mode !== "chat") { body.classList.add("unread"); updateStatus(); }
+  if (res.ok && !res.stopped) window.overlay.chatFinished({ watching, text: res.text, approvals: res.approvals?.length || 0 });
 }
 
 function showReply(el, res) {
@@ -360,6 +364,98 @@ async function findTasks() {
 }
 
 window.overlay.onRunPrompt((text) => { openAndFocus("chat"); submit(text); });
+window.overlay.onOpenChat(() => openAndFocus("chat"));
+
+// ---------- notifications ----------
+// Main sends them (deadlines, check-ins, answers, widget alerts...). One at a time: the pill grows into a card,
+// or, while the chat bar is open, a banner drops in over its top row. Click opens where it came from.
+const N_ICONS = {
+  deadline: '<svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg>',
+  checkin: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg>',
+  digest: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>',
+  answer: '<svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>',
+  approval: '<svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V7z"/><path d="M12 9v4M12 16.5v.5"/></svg>',
+  found: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>',
+  widget: '<svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21a2 2 0 0 0 4 0"/></svg>',
+  built: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="M17 13v8M13 17h8"/></svg>',
+};
+const nQueue = [];
+let nCur = null, nTimer = null, nLeft = 0, nStarted = 0;
+const nDuration = (n) => (n.sticky ? 25_000 : n.urgent ? 10_000 : 7_000);
+
+window.overlay.onNotify((n) => {
+  // A newer one about the same thing (e.g. another answer) replaces the waiting one.
+  const same = nQueue.findIndex((q) => q.kind === n.kind && q.title === n.title);
+  if (same >= 0) { window.overlay.notifyDismiss(nQueue[same].id); nQueue.splice(same, 1); }
+  nQueue.push(n);
+  if (!nCur) nextNotification(); else $("nMore").textContent = `+${nQueue.length}`;
+});
+
+function nextNotification() {
+  clearTimeout(nTimer);
+  nCur = nQueue.shift() || null;
+  if (!nCur) {
+    body.classList.remove("notifying", "urgent");
+    if (mode === "notify") setMode("pill");
+    window.overlay.notifyIdle();
+    return;
+  }
+  const isl = $("island");
+  isl.dataset.kind = nCur.kind;
+  $("nIcon").innerHTML = N_ICONS[nCur.kind] || N_ICONS.widget;
+  $("nTitle").textContent = nCur.title;
+  $("nBody").textContent = nCur.body || "";
+  $("nMore").textContent = nQueue.length ? `+${nQueue.length}` : "";
+  $("nActions").innerHTML = (nCur.actions || []).map((a, i) => `<button class="btn${i ? "" : " primary"}" data-act="${esc(a.id)}">${esc(a.label)}</button>`).join("");
+  // restart the entrance animation and the countdown bar
+  body.classList.remove("notifying", "urgent");
+  void isl.offsetWidth;
+  body.classList.add("notifying");
+  body.classList.toggle("urgent", !!nCur.urgent);
+  nLeft = nDuration(nCur);
+  const bar = $("nBar");
+  bar.style.animation = "none"; void bar.offsetWidth; bar.style.animation = ""; bar.style.animationDuration = `${nLeft}ms`;
+  if (mode === "pill") setMode("notify"); else sendSize();
+  if (nCur.sound) chime(nCur.urgent);
+  runTimer();
+}
+function runTimer() { clearTimeout(nTimer); nStarted = Date.now(); nTimer = setTimeout(() => finish("timeout"), nLeft); }
+function finish(how, action) {
+  if (!nCur) return;
+  if (how === "open") window.overlay.notifyOpen(nCur.id);
+  else if (how === "action") window.overlay.notifyAction(nCur.id, action);
+  else window.overlay.notifyDismiss(nCur.id);
+  nextNotification();
+}
+// Hovering pauses it, so it doesn't vanish while you read.
+$("island").addEventListener("mouseenter", () => { clearTimeout(nTimer); nLeft -= Date.now() - nStarted; });
+$("island").addEventListener("mouseleave", () => { if (nCur) { nLeft = Math.max(nLeft, 2500); runTimer(); } });
+$("island").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (e.target.closest("#nClose")) return finish("dismiss");
+  const act = e.target.closest("[data-act]");
+  if (act) return finish("action", act.dataset.act);
+  if (nCur?.kind === "answer" || nCur?.kind === "approval") body.classList.remove("unread");
+  finish("open");
+});
+
+// A short two-note chime (Settings > Notifications can turn it off).
+let audio = null;
+function chime(urgent) {
+  try {
+    audio ||= new AudioContext();
+    const t = audio.currentTime;
+    (urgent ? [880, 1175, 1568] : [988, 1319]).forEach((f, i) => {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.type = "sine"; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t + i * 0.12);
+      g.gain.linearRampToValueAtTime(0.07, t + i * 0.12 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.45);
+      o.connect(g).connect(audio.destination);
+      o.start(t + i * 0.12); o.stop(t + i * 0.12 + 0.5);
+    });
+  } catch {}
+}
 
 async function capture() {
   capturing = true;
