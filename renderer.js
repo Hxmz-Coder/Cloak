@@ -35,7 +35,7 @@ function setMode(m) {
   mode = m;
   body.dataset.mode = m;
   sendSize();
-  if (m === "chat") { body.classList.remove("unread"); log.scrollTop = log.scrollHeight; }
+  if (m === "chat") log.scrollTop = log.scrollHeight;
   updateStatus();
 }
 let lastSize = "";
@@ -91,7 +91,6 @@ window.overlay.onCollapse(() => { setPinned(false); setMode("pill"); });
 let pillCfg = { label: "Claude", style: "island" };
 let taskCache = [];
 let widgetStatus = {}; // custom widget id -> short status text it published
-let newsTimer = null;
 
 const fmtTime = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
 function pillExtrasHtml(cfg) {
@@ -109,54 +108,18 @@ function pillExtrasHtml(cfg) {
   if (cfg.clock) parts.push(`<span>${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`);
   return parts.join('<span style="opacity:.4">·</span>');
 }
-// Live alerts: something happening right now. A task due now (from your list) or a widget saying so
-// (e.g. the calendar: "Now: Dentist"). These are the only things, besides chat activity, that replace
-// what you chose to show on the pill.
-const widgetAlerts = {}; // widget id -> { text, until }
-function currentAlert() {
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const mins = now.getHours() * 60 + now.getMinutes();
-  for (const t of taskCache) {
-    if (t.done || t.due !== today || !t.time) continue;
-    const [h, m] = t.time.split(":").map(Number);
-    const diff = h * 60 + m - mins;
-    if (diff <= 5 && diff > 0) return `In ${diff} min: ${t.title}`;
-    if (diff <= 0 && diff > -15) return `Now: ${t.title}`;
-  }
-  for (const [id, a] of Object.entries(widgetAlerts)) {
-    if (a.until > Date.now()) return a.text;
-    delete widgetAlerts[id];
-  }
-  return "";
-}
+// The pill shows exactly what you chose in Settings > Top widget, nothing else. Anything that needs your
+// attention (answers, deadlines, new tasks, widget alerts) is a notification instead (see below).
 function updateStatus() {
   const s = $("status");
-  const news = body.classList.contains("news");
-  const unread = body.classList.contains("unread");
-  const alert = !busy && !unread && !news ? currentAlert() : "";
   body.classList.toggle("dot-style", pillCfg.style === "dot");
-  body.classList.toggle("alert", !!alert);
-  if (busy) s.innerHTML = "Working…";
-  else if (unread) s.innerHTML = "Answer ready";
-  else if (news) s.innerHTML = esc(body.dataset.news || "");
-  else if (alert) s.innerHTML = esc(alert);
-  else s.innerHTML = esc(pillCfg.label ?? "Claude");
-  // Otherwise it's exactly what you chose in Settings > Top widget.
-  const plain = !busy && !unread && !news && !alert;
-  $("pillExtra").innerHTML = plain ? pillExtrasHtml(pillCfg) : "";
-  $("pillMode").textContent = plain && pillCfg.showMode !== false && activeModeInfo.id !== "general" ? activeModeInfo.name : "";
-  const dotShown = unread || news || !!alert;
-  $("pillInfo").classList.toggle("blank", !s.innerHTML && !$("pillExtra").innerHTML && !$("pillMode").textContent && !dotShown);
+  s.innerHTML = esc(pillCfg.label ?? "Claude");
+  $("pillExtra").innerHTML = pillExtrasHtml(pillCfg);
+  $("pillMode").textContent = pillCfg.showMode !== false && activeModeInfo.id !== "general" ? activeModeInfo.name : "";
+  $("pillInfo").classList.toggle("blank", !s.innerHTML && !$("pillExtra").innerHTML && !$("pillMode").textContent);
   if (mode === "pill") requestAnimationFrame(fit);
 }
-setInterval(updateStatus, 15_000); // keeps the time, date and "due now" alerts current
-window.overlay.onPillAlert(({ id, text, minutes }) => {
-  if (text) widgetAlerts[id] = { text, until: Date.now() + minutes * 60_000 };
-  else delete widgetAlerts[id];
-  updateStatus();
-});
+setInterval(updateStatus, 15_000); // keeps the time and date current
 
 // ---------- modes ----------
 let activeModeInfo = { id: "general", name: "General" };
@@ -171,13 +134,6 @@ $("modeBtn").onclick = () => window.overlay.modesMenu();
 
 window.overlay.onTasksChanged((list) => { taskCache = list; updateStatus(); });
 window.overlay.onWidgetStatus(({ id, text }) => { widgetStatus[id] = text; updateStatus(); });
-window.overlay.onTasksAdded((n) => {
-  body.dataset.news = `Added ${n} task${n > 1 ? "s" : ""}`;
-  body.classList.add("news");
-  updateStatus();
-  clearTimeout(newsTimer);
-  newsTimer = setTimeout(() => { body.classList.remove("news"); updateStatus(); }, 10_000);
-});
 
 // Settings: the sliders button. Right-click the small widget to switch modes (the menu also has Settings).
 $("settingsBtn").onclick = () => window.overlay.openSettings();
@@ -285,7 +241,6 @@ async function turn(userHtml, call) {
   setBusy(false);
   showReply(el, res);
   const watching = mode === "chat" && document.hasFocus();
-  if (!watching && mode !== "chat") { body.classList.add("unread"); updateStatus(); }
   if (res.ok && !res.stopped) window.overlay.chatFinished({ watching, text: res.text, approvals: res.approvals?.length || 0 });
 }
 
@@ -435,7 +390,6 @@ $("island").addEventListener("click", (e) => {
   if (e.target.closest("#nClose")) return finish("dismiss");
   const act = e.target.closest("[data-act]");
   if (act) return finish("action", act.dataset.act);
-  if (nCur?.kind === "answer" || nCur?.kind === "approval") body.classList.remove("unread");
   finish("open");
 });
 

@@ -12,7 +12,7 @@
 
   /* ---------- top row ---------- */
   .top { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; height: 44px; flex-shrink: 0; }
-  body.busy .logo { animation: spin 1.6s linear infinite; }
+  body.busy:not([data-mode="pill"]) .logo { animation: spin 1.6s linear infinite; } /* the pill itself never changes */
   @keyframes spin { to { transform: rotate(360deg); } }
   /* pill contents: sized to fit, so the window can shrink around them */
   .pill-info { display: inline-flex; align-items: center; gap: 8px; flex: none; white-space: nowrap; padding-right: 6px; }
@@ -31,16 +31,10 @@
     border: 1px solid rgba(var(--accent-rgb), .45); background: rgba(var(--accent-rgb), .12); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; }
   .mode-btn:hover { background: rgba(var(--accent-rgb), .22); }
   .mode-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
-  body.alert #status { color: var(--accent); }
-  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); display: none; }
-  body.unread .dot, body.news .dot, body.alert .dot { display: block; }
-  body.news .dot { background: var(--ok); }
 
-  /* Dot style: just the logo in a small circle. A ring shows when something's waiting. */
+  /* Dot style: just the logo in a small circle. */
   body.dot-style[data-mode="pill"] .top { justify-content: center; padding: 0; }
   body.dot-style[data-mode="pill"] .pill-info { display: none !important; }
-  body.dot-style.unread[data-mode="pill"] .logo, body.dot-style.news[data-mode="pill"] .logo, body.dot-style.alert[data-mode="pill"] .logo {
-    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
 
   #input { flex: 1; min-width: 60px; resize: none; background: transparent; border: 0; outline: 0; color: var(--text);
     font: inherit; font-size: 14px; padding: 4px 2px; height: 26px; max-height: 26px; overflow: hidden; user-select: text; }
@@ -193,7 +187,7 @@
   </div>
   <div class="top">
     <div class="logo">✳</div>
-    <div class="pill-info pill-only" id="pillInfo"><span id="status"></span><span id="pillMode"></span><span id="pillExtra"></span><span class="dot"></span></div>
+    <div class="pill-info pill-only" id="pillInfo"><span id="status"></span><span id="pillMode"></span><span id="pillExtra"></span></div>
     <button class="mode-btn expanded-only" id="modeBtn" title="Switch mode"><span id="modeName">General</span>
       <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>
     <textarea id="input" rows="1" placeholder="Ask Claude, or tell it what to do…"></textarea>

@@ -410,8 +410,7 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
   let text = json.result || "";
   if (json.subtype === "error_max_turns") text += "\n\n_(Stopped after too many steps. Say \"continue\" to keep going.)_";
   const { text: cleaned, items } = extractTaskBlocks(text);
-  const added = items.length ? tasks.add(items, "claude") : [];
-  if (added.length) announceTasks(added.length);
+  const added = items.length ? tasks.add(items, "claude") : []; // the reply says so (and the answer notification, if you're away)
 
   pendingApprovals = new Map();
   const approvals = (json.permission_denials || []).map(describeDenial);
@@ -500,10 +499,8 @@ ${shots.map((s) => `${s.time}: ${s.path}`).join("\n") || "(none)"}`);
     let found = res.json.structured_output?.tasks;
     if (!found) { try { found = JSON.parse(res.json.result).tasks; } catch { found = []; } }
     const added = tasks.add(found || [], "claude");
-    if (added.length && !pushNotification({ kind: "found", title: `Added ${added.length} task${added.length > 1 ? "s" : ""}`,
-      body: added.slice(0, 2).map((t) => t.title).join(", ") + (added.length > 2 ? ` +${added.length - 2} more` : ""), target: { type: "tasks", taskId: added[0].id } })) {
-      announceTasks(added.length);
-    }
+    if (added.length) pushNotification({ kind: "found", title: `Added ${added.length} task${added.length > 1 ? "s" : ""}`,
+      body: added.slice(0, 2).map((t) => t.title).join(", ") + (added.length > 2 ? ` +${added.length - 2} more` : ""), target: { type: "tasks", taskId: added[0].id } });
     if (notesText) notesScannedText = notesText;
     return { added: added.map((t) => t.title) };
   } finally {
@@ -520,8 +517,6 @@ function autoScan() {
   if (busy || notesChanged) scanTasks({ activity: busy, notes: notesChanged }).catch(() => {});
 }
 
-// Claude added tasks: tell the pill (the task panel stays hidden until you open it).
-function announceTasks(n) { widget?.webContents.send("tasks-added", n); }
 function broadcast(ch, data) {
   for (const w of [widget, ...Object.values(panels)]) if (w && !w.isDestroyed()) w.webContents.send(ch, data);
 }
@@ -1050,12 +1045,9 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
       return true;
     }
     case "pill.notify": {
-      // Something happening right now (e.g. "Now: Dentist"). Shown on the pill for a few minutes even if you
-      // didn't pick this widget for the pill. "" clears it.
+      // Something happening right now (e.g. "Now: Dentist"): a notification, at most once a minute per widget.
+      // (The pill itself only ever shows what you chose in Settings.)
       const text = args[0] == null ? "" : String(args[0]).replace(/\s+/g, " ").trim().slice(0, 50);
-      const minutes = Math.min(30, Math.max(1, Number(args[1]) || 10));
-      widget?.webContents.send("pill-alert", { id, text, minutes });
-      // Also pop it out as a notification, at most once a minute per widget.
       const last = widgetNotifyAt.get(id) || 0;
       if (text && Date.now() - last > 60_000) {
         widgetNotifyAt.set(id, Date.now());

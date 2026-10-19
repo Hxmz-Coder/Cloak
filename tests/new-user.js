@@ -160,6 +160,8 @@ const SCENARIOS = {
     const island = () => js(w, `return { on: document.body.classList.contains("notifying"), mode: document.body.dataset.mode, title: document.getElementById("nTitle").textContent, body: document.getElementById("nBody").textContent, more: document.getElementById("nMore").textContent, acts: [...document.querySelectorAll("#nActions [data-act]")].map(b => b.dataset.act) }`);
     const clear = async () => { for (let i = 0; i < 6 && (await island()).on; i++) { await js(w, `document.getElementById("nClose").click(); return 1`); await wait(300); } };
     w.webContents.send("collapse"); await wait(500);
+    const pillText = () => js(w, `return document.getElementById("pillInfo").innerText`);
+    const pill0 = await pillText();
 
     // The rules, with a fake clock (no waiting).
     const st = new NotifyState(path.join(profile, "rules-test.json"));
@@ -224,7 +226,15 @@ const SCENARIOS = {
     ipcMain.emit("chat-finished", {}, { watching: false, text: "two", approvals: 0 }); await wait(700);
     n = await island();
     check("notifications queue (+1 waiting)", n.title === "Claude needs your OK" && n.more === "+1", JSON.stringify(n));
-    await clear();
+    await clear(); await wait(400);
+    // The pill only ever shows what you chose in Settings: no "Answer ready", "Working…", "Now: ..." or "Added tasks".
+    w.webContents.send("collapse"); await wait(400);
+    const pill1 = await pillText();
+    check("the pill is unchanged after answers, deadlines and check-ins", pill1 === pill0, JSON.stringify([pill0, pill1]));
+    await js(w, `setBusy(true); return 1`); await wait(200);
+    const pill2 = await pillText();
+    await js(w, `setBusy(false); return 1`);
+    check("the pill doesn't change while Claude is working", pill2 === pill0, JSON.stringify([pill0, pill2]));
 
     // Hidden top widget: shown just for the notification, then hidden again.
     ipcMain.emit("hide-widget"); await wait(400);
