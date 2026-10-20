@@ -253,11 +253,16 @@
       <section id="s-general">
         <h2>General</h2>
         <div class="row"><div class="grow"><div class="t">Start when I sign in to Windows</div></div><label class="switch"><input type="checkbox" id="openAtLogin"><span></span></label></div>
-        <h3>Sign-in</h3>
-        <div class="row"><div class="grow"><div class="t" id="authTitle">Claude subscription</div><div class="d" id="authDesc"></div></div><button class="btn" id="authChange">Change</button></div>
+        <h3>AI</h3>
+        <div class="row"><div class="grow"><div class="t">Which AI Cloak uses</div><div class="d">Everything works the same with either. Switching starts a new chat.</div></div>
+          <div class="seg" id="aiPick"><button data-v="claude">Claude</button><button data-v="chatgpt">ChatGPT</button></div></div>
+        <div class="row" id="claudeRow"><div class="grow"><div class="t" id="authTitle">Claude subscription</div><div class="d" id="authDesc"></div></div><button class="btn" id="authChange">Change</button></div>
+        <div class="row" id="codexRow"><div class="grow"><div class="t">ChatGPT account</div><div class="d" id="codexDesc"></div></div>
+          <div class="btns" style="margin:0"><button class="btn" id="codexInstall">Install</button><button class="btn" id="codexLogin">Sign in</button><button class="btn ghost" id="codexCheck">Check</button></div></div>
         <div class="row"><div class="grow"><div class="t">Setup guide</div><div class="d">The welcome tour: what everything does, and connecting Claude.</div></div><button class="btn" id="rerunSetup">Open</button></div>
+        <div class="row"><div class="grow"><div class="t">Restart Cloak</div><div class="d">Closes and reopens Cloak, for example after an update. Your tasks, notes, chat and widgets are kept.</div></div><button class="btn" id="restartApp">Restart</button></div>
         <h3>About</h3>
-        <p class="hint"><b id="version">Cloak</b> runs Claude through the Claude Code CLI on this computer, with your Claude subscription or your own Anthropic API key.</p>
+        <p class="hint"><b id="version">Cloak</b> runs Claude through the Claude Code CLI on this computer (with your Claude subscription or your own Anthropic API key), or ChatGPT through OpenAI's Codex CLI with your ChatGPT account.</p>
       </section>
     </main>
   </div>

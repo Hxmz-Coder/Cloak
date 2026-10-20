@@ -457,12 +457,37 @@ $("pShowMode").onchange = () => savePill({ showMode: $("pShowMode").checked });
 // ---------- sign-in ----------
 function renderAuth() {
   const a = S.auth || {};
+  const gpt = a.provider === "chatgpt";
+  document.querySelectorAll("#aiPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === (a.provider || "claude")));
+  $("claudeRow").style.display = gpt ? "none" : "";
+  $("codexRow").style.display = gpt ? "" : "none";
+  const c = a.codex || {};
+  $("codexDesc").textContent = !c.installed ? "Cloak talks to ChatGPT through OpenAI's Codex CLI. Click Install (it needs Node.js, which Cloak already uses), then Sign in."
+    : !c.loggedIn ? "Codex is installed. Click Sign in and choose Sign in with ChatGPT (Plus or Pro), then click Check."
+    : `Signed in. ${c.detail || ""}`.trim();
+  $("codexInstall").style.display = c.installed ? "none" : "";
+  $("codexLogin").style.display = c.installed && !c.loggedIn ? "" : "none";
   $("authTitle").textContent = a.mode === "apiKey" ? "Anthropic API key" : "Claude subscription (Pro or Max)";
   $("authDesc").textContent = !a.claudeInstalled ? "Claude Code isn't installed yet. Open the setup guide to install it."
     : a.mode === "apiKey" ? `Using your API key ${a.keyHint || ""}. You pay Anthropic per use.` : "Using your Claude account's sign-in in Claude Code.";
 }
 $("authChange").onclick = () => ov.openWelcome("connect");
+$("aiPick").addEventListener("click", async (e) => {
+  const v = e.target.dataset.v;
+  if (!v || v === S.auth?.provider) return;
+  S.auth = await ov.setProvider(v);
+  renderAuth();
+});
+$("codexInstall").onclick = () => { ov.installCodex(); $("codexDesc").textContent = "Installing in the window that opened. When it says Done, click Check."; $("codexLogin").style.display = ""; };
+$("codexLogin").onclick = () => { ov.openCodexLogin(); $("codexDesc").textContent = "Finish signing in in your browser, then click Check."; };
+$("codexCheck").onclick = async () => {
+  $("codexCheck").textContent = "Checking…";
+  S.auth = { ...S.auth, codex: await ov.codexStatus() };
+  $("codexCheck").textContent = "Check";
+  renderAuth();
+};
 $("rerunSetup").onclick = () => ov.openWelcome("welcome");
+$("restartApp").onclick = () => { $("restartApp").disabled = true; $("restartApp").textContent = "Restarting…"; ov.restartApp(); };
 
 // ---------- load ----------
 async function refresh() {

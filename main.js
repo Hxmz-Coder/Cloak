@@ -12,6 +12,7 @@ const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
 const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widgets");
 const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
 const { DEFAULT_NOTIFY, NotifyState, taskNotifications } = require("./lib/notify");
+const codex = require("./lib/codex");
 
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -53,6 +54,39 @@ Task list: the user has a task list widget. To add tasks to it, put a fenced cod
 Notes: the user keeps personal notes in a notes widget. They are the user's own writing; you only see them when they're included in a message. Never rewrite or "submit" them.
 
 Style: concise and direct. Use short markdown (bullets, code blocks) when it helps.`;
+
+// ---------- which AI: Claude (through Claude Code) or ChatGPT (through OpenAI's Codex CLI) ----------
+// Settings > General. Everything else in Cloak works the same with either.
+const provider = () => (loadConfig().provider === "chatgpt" ? "chatgpt" : "claude");
+const aiName = () => (provider() === "chatgpt" ? "ChatGPT" : "Claude");
+const runAI = (opts) => (provider() === "chatgpt" ? codex.runCodex(opts) : runClaude(opts));
+const aiError = (t) => (provider() === "chatgpt" ? codex.friendlyCodexError(t) : friendlyError(t));
+// Codex can't hand back the actions it was blocked from, so it's asked to request them (see lib/codex.js).
+const CODEX_APPROVALS = `You start with read-only access: you can read files, search the web and run commands that only look at things. Don't try anything that changes something (creating, editing or deleting files, installing software, commands that modify the system). Instead, finish everything else you can, then end your reply with one line per change, exactly in this form:
+APPROVAL NEEDED: <short description of the change, e.g. Create notes.txt in Documents>
+The widget turns each of those lines into an Allow button. If the user allows it, you'll be asked to go ahead with write access. Never try to get around this another way.`;
+function systemPrompt() {
+  if (provider() !== "chatgpt") return SYSTEM;
+  return SYSTEM.replace("You are Claude,", "You are ChatGPT,")
+    .replace(/Some actions need the user's approval:[\s\S]*?never try to get around a block another way\./, CODEX_APPROVALS)
+    .replace("open them with the Read tool before answering", "they're attached to the message as images; look at them before answering");
+}
+// Claude Code gets the instructions as a file argument; Codex reads AGENTS.md from its working folder.
+function writeInstructions() {
+  const text = systemPrompt() + modePrompt(activeMode());
+  fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), text);
+  fs.writeFileSync(path.join(workDir(), "AGENTS.md"), text);
+}
+const CODEX_EFFORT = { fast: "low", balanced: "medium", smart: "high" };
+function makeChat() {
+  if (provider() === "chatgpt") {
+    return new codex.CodexChat(() => {
+      const cfg = loadConfig();
+      return { cwd: workDir(), effort: CODEX_EFFORT[cfg.chatSpeed] || "medium", addDirs: [os.homedir()], alwaysWrite: cfg.autoAllow.includes(codex.WRITE_RULE) };
+    });
+  }
+  return new ChatSession(chatOptions);
+}
 
 // Main widget sizes (include a little transparent margin for the shadow). The pill's width follows its content.
 const WIDGET = { pill: [160, 58], bar: [680, 150], chat: [680, 620], edit: [680, 400], notify: [420, 110] };
@@ -130,7 +164,7 @@ function saveModes(modes) {
 // conversation) the next time it's used, because its options include the mode.
 function applyMode() {
   const mode = activeMode();
-  fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), SYSTEM + modePrompt(mode));
+  writeInstructions();
   broadcast("mode-changed", { id: mode.id, name: mode.name, shortcuts: mode.shortcuts });
   chat?.warm();
 }
@@ -355,7 +389,7 @@ function chatOptions() {
   return {
     cwd: workDir(),
     tools: TOOLS,
-    allowedTools: [...AUTO_ALLOWED, ...cfg.autoAllow],
+    allowedTools: [...AUTO_ALLOWED, ...cfg.autoAllow.filter((r) => r !== codex.WRITE_RULE)],
     addDirs: [os.homedir()],
     systemPromptFile: path.join(workDir(), "system-prompt.txt"),
     ...(CHAT_SPEEDS[cfg.chatSpeed] || CHAT_SPEEDS.balanced),
@@ -376,7 +410,7 @@ function loadHistory() {
   try { return JSON.parse(fs.readFileSync(chatHistoryPath(), "utf8")); } catch { return { sessionId: null, messages: [] }; }
 }
 function saveHistory(messages) {
-  fs.writeFileSync(chatHistoryPath(), JSON.stringify({ sessionId: chat.sessionId, messages: messages.slice(-200) }));
+  fs.writeFileSync(chatHistoryPath(), JSON.stringify({ sessionId: chat.sessionId, provider: provider(), messages: messages.slice(-200) }));
 }
 
 // display: what to show as your message in the chat (null for follow-ups like approvals).
@@ -396,16 +430,16 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
   let res = await chat.send(full, { onEvent, extraAllowed });
   // If the saved conversation can't be resumed (e.g. it was deleted), start a fresh one instead of failing.
   const failText = res.error || (res.json?.is_error ? res.json.result : "");
-  if (/no conversation found/i.test(failText || "")) {
+  if (/no conversation found|(thread|session|conversation)\b.*\bnot found/i.test(failText || "")) {
     chat.sessionId = null;
     chat.kill();
     res = await chat.send(full, { onEvent, extraAllowed });
   }
   if (res.stopped) return { ok: true, stopped: true };
-  if (res.error) return { ok: false, error: friendlyError(res.error) };
+  if (res.error) return { ok: false, error: aiError(res.error) };
 
   const { json } = res;
-  if (json.is_error) return { ok: false, error: friendlyError(json.result || `Claude Code returned an error (${json.subtype}).`) };
+  if (json.is_error) return { ok: false, error: aiError(json.result || `${aiName()} returned an error (${json.subtype}).`) };
 
   let text = json.result || "";
   if (json.subtype === "error_max_turns") text += "\n\n_(Stopped after too many steps. Say \"continue\" to keep going.)_";
@@ -413,7 +447,7 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
   const added = items.length ? tasks.add(items, "claude") : []; // the reply says so (and the answer notification, if you're away)
 
   pendingApprovals = new Map();
-  const approvals = (json.permission_denials || []).map(describeDenial);
+  const approvals = (json.permission_denials || []).map((d, i) => (d.codex ? codex.describeCodexRequest(d) : describeDenial(d, i)));
   for (const a of approvals) pendingApprovals.set(a.id, a);
   const shown = approvals.length ? tidyBlockedText(cleaned) : cleaned;
   history.push({ role: "bot", text: shown, time: Date.now() });
@@ -489,13 +523,13 @@ Screenshots, oldest to newest (open each with Read):
 ${shots.map((s) => `${s.time}: ${s.path}`).join("\n") || "(none)"}`);
     }
     parts.push("It's fine to return an empty list.");
-    const run = runClaude({
+    const run = runAI({
       cwd: workDir(), prompt: parts.join("\n\n"), tools: shots.length ? "Read" : "", allowedTools: shots.length ? ["Read"] : [],
       jsonSchema: scanSchema(notesText ? 25 : 8), effort: notesText ? "medium" : "low", persist: false,
     });
     const res = await run.done;
-    if (res.error) return { added: [], error: friendlyError(res.error) };
-    if (res.json.is_error) return { added: [], error: friendlyError(res.json.result) };
+    if (res.error) return { added: [], error: aiError(res.error) };
+    if (res.json.is_error) return { added: [], error: aiError(res.json.result) };
     let found = res.json.structured_output?.tasks;
     if (!found) { try { found = JSON.parse(res.json.result).tasks; } catch { found = []; } }
     const added = tasks.add(found || [], "claude");
@@ -583,8 +617,8 @@ ipcMain.on("notify-idle", () => {
 ipcMain.on("chat-finished", (_e, { watching, text, approvals }) => {
   if (watching) return;
   const preview = String(text || "").replace(/```[\s\S]*?```/g, "[code]").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
-  if (approvals) pushNotification({ kind: "approval", sticky: true, title: "Claude needs your OK", body: preview.slice(0, 120) || "Review the action in the chat.", target: { type: "chat" } });
-  else pushNotification({ kind: "answer", title: "Claude answered", body: preview.slice(0, 120) || "Your answer is ready.", target: { type: "chat" } });
+  if (approvals) pushNotification({ kind: "approval", sticky: true, title: `${aiName()} needs your OK`, body: preview.slice(0, 120) || "Review the action in the chat.", target: { type: "chat" } });
+  else pushNotification({ kind: "answer", title: `${aiName()} answered`, body: preview.slice(0, 120) || "Your answer is ready.", target: { type: "chat" } });
 });
 ipcMain.handle("set-notify", (_e, patch) => {
   const next = { ...notifyCfg(), ...patch };
@@ -635,7 +669,7 @@ ipcMain.on("write-clipboard", (_e, text) => clipboard.writeText(text));
 ipcMain.handle("get-config", () => {
   const cfg = loadConfig();
   const mode = activeMode();
-  return { shortcuts: mode.shortcuts, mode: { id: mode.id, name: mode.name }, memoryEnabled: cfg.memoryEnabled, pill: cfg.pill, widgetStatus, panels: panelList() };
+  return { shortcuts: mode.shortcuts, mode: { id: mode.id, name: mode.name }, memoryEnabled: cfg.memoryEnabled, pill: cfg.pill, widgetStatus, panels: panelList(), aiName: aiName() };
 });
 
 // Folder button: every widget in a menu, plus open/hide all.
@@ -715,9 +749,9 @@ ipcMain.handle("restore-mode", (_e, id) => {
 // Claude designs a mode from a description: name, instructions and shortcut buttons.
 ipcMain.handle("build-mode", async (_e, request) => {
   if (!String(request || "").trim()) return { ok: false, error: "Describe the mode first." };
-  const res = await runClaude({ cwd: workDir(), prompt: modeBuildPrompt(String(request).trim()), tools: "", jsonSchema: MODE_SCHEMA, effort: "medium", persist: false }).done;
-  if (res.error) return { ok: false, error: friendlyError(res.error) };
-  if (res.json.is_error) return { ok: false, error: friendlyError(res.json.result) };
+  const res = await runAI({ cwd: workDir(), prompt: modeBuildPrompt(String(request).trim()), tools: "", jsonSchema: MODE_SCHEMA, effort: "medium", persist: false }).done;
+  if (res.error) return { ok: false, error: aiError(res.error) };
+  if (res.json.is_error) return { ok: false, error: aiError(res.json.result) };
   let m = res.json.structured_output;
   if (!m) { try { m = JSON.parse(res.json.result); } catch {} }
   if (!m?.name) return { ok: false, error: "Claude didn't return a mode. Try describing it again." };
@@ -854,8 +888,38 @@ function authStatus() {
     keyHint: cfg.apiKeyHint || null,
     claudeInstalled: !!findClaude(),
     onboarded: !!cfg.onboarded,
+    provider: provider(),
+    aiName: aiName(),
+    // Checking ChatGPT's sign-in runs the Codex CLI, so only when ChatGPT is the one in use.
+    codex: provider() === "chatgpt" ? codex.loginStatus() : null,
   };
 }
+ipcMain.handle("set-provider", (_e, p) => {
+  if (!["claude", "chatgpt"].includes(p)) return authStatus();
+  if (p !== provider()) {
+    saveConfig({ provider: p });
+    chat.kill();
+    chat = makeChat(); // a new conversation: one AI can't continue the other's
+    fs.rmSync(chatHistoryPath(), { force: true });
+    pendingApprovals = new Map();
+    writeInstructions();
+    broadcast("ai-changed", aiName());
+  }
+  return authStatus();
+});
+ipcMain.handle("codex-status", () => codex.loginStatus(true));
+ipcMain.on("install-codex", () => openTerminal(
+  "Write-Host 'Installing the Codex CLI (OpenAI, from npm), which Cloak uses for ChatGPT...' -ForegroundColor Cyan; " +
+  "npm install -g @openai/codex; Write-Host ''; " +
+  "Write-Host 'Done. Go back to Cloak and click Sign in next to ChatGPT. You can close this window.' -ForegroundColor Green"));
+ipcMain.on("open-codex-login", () => {
+  const exe = codex.findCodex();
+  if (!exe) return;
+  openTerminal(
+    "Write-Host 'Sign in to ChatGPT:' -ForegroundColor Cyan; " +
+    "Write-Host '  Choose Sign in with ChatGPT and finish in your browser, then go back to Cloak and click Check.'; Write-Host ''; " +
+    `& '${exe.replace(/'/g, "''")}' login`);
+});
 ipcMain.handle("auth-status", () => authStatus());
 ipcMain.handle("auth-set", (_e, { mode, apiKey }) => {
   const patch = { authMode: mode === "apiKey" ? "apiKey" : "subscription" };
@@ -875,10 +939,17 @@ ipcMain.handle("auth-set", (_e, { mode, apiKey }) => {
 });
 // A tiny real request, to confirm Claude answers with the chosen sign-in.
 ipcMain.handle("auth-test", async () => {
+  if (provider() === "chatgpt") {
+    const st = codex.loginStatus(true);
+    if (!st.installed) return { ok: false, error: codex.NOT_FOUND_MSG };
+    if (!st.loggedIn) return { ok: false, error: aiError("not logged in") };
+    const r = await codex.runCodex({ cwd: workDir(), prompt: "Reply with just the word: ready", effort: "low" }).done;
+    return r.error ? { ok: false, error: aiError(r.error) } : { ok: true };
+  }
   if (!findClaude()) return { ok: false, error: "Claude Code isn't installed yet." };
-  const res = await runClaude({ cwd: workDir(), prompt: "Reply with just the word: ready", tools: "", model: "haiku", effort: "low", persist: false }).done;
-  if (res.error) return { ok: false, error: friendlyError(res.error) };
-  if (res.json.is_error) return { ok: false, error: friendlyError(res.json.result) };
+  const res = await runAI({ cwd: workDir(), prompt: "Reply with just the word: ready", tools: "", model: "haiku", effort: "low", persist: false }).done;
+  if (res.error) return { ok: false, error: aiError(res.error) };
+  if (res.json.is_error) return { ok: false, error: aiError(res.json.result) };
   return { ok: true };
 });
 // Opens a visible PowerShell window. Used for the official Claude Code installer and for signing in.
@@ -903,7 +974,7 @@ ipcMain.on("open-claude-login", () => {
 });
 // Only a few known pages can be opened from the setup screens.
 ipcMain.on("open-external", (_e, url) => {
-  if (/^https:\/\/(console\.anthropic\.com|claude\.ai|claude\.com|code\.claude\.com|nodejs\.org|github\.com\/Hxmz-Coder)\//.test(String(url))) shell.openExternal(url);
+  if (/^https:\/\/(console\.anthropic\.com|claude\.ai|claude\.com|code\.claude\.com|nodejs\.org|github\.com\/Hxmz-Coder|chatgpt\.com|learn\.chatgpt\.com)\//.test(String(url))) shell.openExternal(url);
 });
 
 // ---------- welcome / setup ----------
@@ -915,6 +986,9 @@ function openWelcome(step) {
   else wc.send("welcome-step", step);
 }
 ipcMain.on("open-welcome", (_e, step) => openWelcome(step));
+// Settings > General > Restart: start a fresh copy, then quit this one normally (windows close, so anything
+// half-typed in Notes is saved first).
+ipcMain.on("restart-app", () => { app.relaunch(); app.quit(); });
 ipcMain.handle("welcome-done", (_e, { profile, mode }) => {
   saveConfig({ onboarded: true, profile: profile || {} });
   if (mode) setActiveMode(mode);
@@ -979,9 +1053,9 @@ ipcMain.handle("widget-build", async (_e, { request, id }) => {
     let prompt = buildPrompt(String(request).trim(), existing);
     for (let attempt = 1; attempt <= 2; attempt++) {
       progress(attempt === 1 ? (id ? "Claude is changing the widget…" : "Claude is designing and coding your widget…") : "Fixing a problem in the code…");
-      const res = await runClaude({ cwd: workDir(), prompt, tools: "", jsonSchema: BUILD_SCHEMA, effort: "high", persist: false, timeoutMs: 10 * 60_000 }).done;
-      if (res.error) return { ok: false, error: friendlyError(res.error) };
-      if (res.json.is_error) return { ok: false, error: friendlyError(res.json.result) };
+      const res = await runAI({ cwd: workDir(), prompt, tools: "", jsonSchema: BUILD_SCHEMA, effort: "high", persist: false, timeoutMs: 10 * 60_000 }).done;
+      if (res.error) return { ok: false, error: aiError(res.error) };
+      if (res.json.is_error) return { ok: false, error: aiError(res.json.result) };
       let build = res.json.structured_output;
       if (!build) { try { build = JSON.parse(res.json.result); } catch {} }
       if (!build?.html && !build?.js) return { ok: false, error: "Claude didn't return a widget. Try describing it again." };
@@ -1060,9 +1134,9 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
       const recent = (askLog.get(id) || []).filter((t) => t > Date.now() - 3600_000);
       if (recent.length >= 30) throw new Error("This widget has asked Claude too many times this hour.");
       askLog.set(id, [...recent, Date.now()]);
-      const res = await runClaude({ cwd: workDir(), prompt: String(args[0] || "").slice(0, 20000), tools: "", effort: "low", persist: false }).done;
-      if (res.error) throw new Error(friendlyError(res.error));
-      if (res.json.is_error) throw new Error(friendlyError(res.json.result));
+      const res = await runAI({ cwd: workDir(), prompt: String(args[0] || "").slice(0, 20000), tools: "", effort: "low", persist: false }).done;
+      if (res.error) throw new Error(aiError(res.error));
+      if (res.json.is_error) throw new Error(aiError(res.json.result));
       return res.json.result || "";
     }
     default: throw new Error(`Unknown widget API: ${name}`);
@@ -1205,7 +1279,7 @@ function buildTray() {
 app.whenReady().then(() => {
   try { syncLoginItem(); } catch {}
   fs.mkdirSync(workDir(), { recursive: true });
-  fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), SYSTEM + modePrompt(activeMode()));
+  writeInstructions();
   clearChatScreenshots();
 
   tasks = new TaskStore(path.join(userData(), "tasks.json"), (list) => broadcast("tasks-changed", list));
@@ -1216,8 +1290,9 @@ app.whenReady().then(() => {
   });
   memory.start();
   loadAuth();
-  chat = new ChatSession(chatOptions);
-  chat.sessionId = loadHistory().sessionId;
+  chat = makeChat();
+  const saved = loadHistory();
+  if ((saved.provider || "claude") === provider()) chat.sessionId = saved.sessionId; // continue the last conversation
   chat.warm(); // start Claude now so the first message is quick
   notesScannedText = readNotes().trim(); // only rescan notes after they change
   setInterval(autoScan, AUTO_SCAN_EVERY_MS);

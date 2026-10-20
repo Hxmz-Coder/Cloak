@@ -320,6 +320,9 @@ async function findTasks() {
 
 window.overlay.onRunPrompt((text) => { openAndFocus("chat"); submit(text); });
 window.overlay.onOpenChat(() => openAndFocus("chat"));
+// Claude or ChatGPT (Settings > General). Switching starts a new chat.
+function setAiName(name) { input.placeholder = `Ask ${name || "Claude"}, or tell it what to do…`; }
+window.overlay.onAiChanged((name) => { setAiName(name); log.innerHTML = ""; });
 
 // ---------- notifications ----------
 // Main sends them (deadlines, check-ins, answers, widget alerts...). One at a time: the pill grows into a card,
@@ -548,6 +551,7 @@ $("edReset").onclick = async () => {
   activeModeInfo = cfg.mode || activeModeInfo;
   $("modeName").textContent = activeModeInfo.name;
   pillCfg = cfg.pill;
+  setAiName(cfg.aiName);
   widgetStatus = cfg.widgetStatus || {};
   taskCache = await window.overlay.listTasks();
   // Bring back the conversation from last time.

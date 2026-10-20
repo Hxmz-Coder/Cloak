@@ -4,6 +4,8 @@ A customizable Claude overlay for your Windows desktop. It adds a small widget a
 
 It runs Claude through the [Claude Code](https://code.claude.com) CLI, using either **your Claude subscription** (Pro or Max, with no extra cost) or **your own Anthropic API key** (pay per use). A setup guide walks you through either one.
 
+**ChatGPT instead (early).** In Settings, General, you can switch the AI to **ChatGPT**. Cloak then talks to ChatGPT through OpenAI's [Codex CLI](https://github.com/openai/codex), signed in with your ChatGPT account (Plus or Pro). Settings has Install and Sign in buttons for it. Everything works the same, with one difference: ChatGPT starts read-only, and asks for one **Allow** per request before it changes files or runs commands. Claude's cards ask about each action separately.
+
 **v1.1.0**
 
 ## Features
@@ -90,6 +92,7 @@ Claude-built widgets live in `%APPDATA%\cloak\widgets\<id>\`. `source.json` hold
 | `lib/claude.js` | Runs the `claude` CLI and turns its errors into clear messages |
 | `lib/permissions.js` | What runs without asking, and the approval cards |
 | `lib/memory.js` | Screen memory (window history and screenshots) |
+| `lib/codex.js` | ChatGPT through the Codex CLI: one-off runs, the chat, sign-in status and approval requests |
 | `lib/tasks.js` | The task list |
 | `lib/notify.js` | When to notify you (deadlines, check-ins, daily summary), remembered across restarts |
 | `lib/widgets.js` | The custom widget store, the builder prompt, and the sandboxed page template |

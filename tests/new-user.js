@@ -407,6 +407,68 @@ const SCENARIOS = {
     }
   },
 
+  // ChatGPT through the Codex CLI, using tests/fake-codex.js in its place (no OpenAI account or network needed).
+  async "chatgpt"() {
+    process.env.CODEX_CLI_PATH = path.join(__dirname, "fake-codex.js");
+    const logFile = path.join(profile, "codex-calls.jsonl");
+    process.env.FAKE_CODEX_LOG = logFile;
+    const calls = () => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+    const lastCall = () => calls().pop() || {};
+    await call("welcome-done", { profile: {}, mode: "general" });
+
+    const st = await call("set-provider", "chatgpt");
+    check("switches to ChatGPT", st.provider === "chatgpt" && st.aiName === "ChatGPT" && st.codex?.installed && st.codex?.loggedIn, JSON.stringify(st));
+    const agents = fs.readFileSync(path.join(profile, "claude-chat", "AGENTS.md"), "utf8");
+    check("Codex gets its instructions in AGENTS.md", /You are ChatGPT/.test(agents) && /APPROVAL NEEDED/.test(agents) && !/Read tool/.test(agents));
+    const w = await win("Claude Widget");
+    await wait(300);
+    check("chat bar says Ask ChatGPT", /Ask ChatGPT/.test(await js(w, `return document.getElementById("input").placeholder`)));
+
+    let r = await ask("Please remember the word pineapple.");
+    check("ChatGPT answers in the chat", r.ok && /ChatGPT here/.test(r.text), r.error || r.text);
+    check("first message starts a read-only Codex run", lastCall().resume === false && lastCall().write === false && lastCall().args.includes("--json"), JSON.stringify(lastCall().args));
+    r = await ask("What word did I ask you to remember?");
+    check("follow-ups continue the same conversation", r.ok && /pineapple/.test(r.text) && lastCall().resume === true, r.text);
+    r = await ask("Please list files in my Documents folder.");
+    check("ChatGPT can run look-only commands", r.ok, r.error);
+
+    r = await ask("Please create a file called notes.txt in Documents.");
+    check("a change becomes an Allow card", r.ok && r.approvals?.length === 1 && r.approvals[0].title === "Create notes.txt in Documents" && !/APPROVAL NEEDED/.test(r.text), JSON.stringify(r));
+    const a = await call("approve", { ids: [r.approvals[0].id], always: [] });
+    check("Allow repeats it with write access", a.ok && /Created notes\.txt/.test(a.text) && lastCall().write === true, a.text || a.error);
+    await ask("Thanks.");
+    check("write access was only for that one turn", lastCall().write === false);
+
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    r = await call("ask", { text: "What's on my screen?", image: png });
+    check("screenshots are attached as images", r.ok && /I can see 1 image/.test(r.text) && lastCall().images.length === 1, r.text || r.error);
+
+    check("Test sign-in works with ChatGPT", (await call("auth-test")).ok);
+    const m = await call("build-mode", "Help me prepare for job interviews.");
+    check("builds a mode with ChatGPT", m.ok && m.modes.some((x) => x.name === "Interview prep"), m.error);
+    const b = await call("widget-build", { request: "A click counter." });
+    check("builds a widget with ChatGPT", b.ok && b.widget.name === "Counter", b.error);
+    const schemaCall = calls().find((c) => c.args.includes("--output-schema"));
+    check("structured answers use --output-schema", !!schemaCall && schemaCall.args.includes("--ephemeral"));
+    await call("notes-set", "Buy poster board");
+    const sync = await call("notes-sync-now");
+    check("notes turn into tasks with ChatGPT", sync && sync.added?.includes("Buy poster board"), JSON.stringify(sync));
+
+    process.env.FAKE_CODEX_LOGGED_OUT = "1";
+    const out = await call("codex-status");
+    check("notices when ChatGPT isn't signed in", out.installed && !out.loggedIn, JSON.stringify(out));
+    r = await ask("hello?");
+    check("signed out: a clear message", !r.ok && /isn't signed in/.test(r.error), r.error);
+    delete process.env.FAKE_CODEX_LOGGED_OUT;
+
+    const back = await call("set-provider", "claude");
+    check("switches back to Claude", back.provider === "claude" && /You are Claude/.test(fs.readFileSync(path.join(profile, "claude-chat", "AGENTS.md"), "utf8")));
+    ipcMain.emit("open-settings", {}, "general"); await wait(1500);
+    const s = await win("Claude Settings");
+    const ui = await js(s, `return { pick: document.querySelectorAll("#aiPick button").length, restart: !!document.getElementById("restartApp") }`);
+    check("Settings has the AI picker and Restart", ui.pick === 2 && ui.restart, JSON.stringify(ui));
+  },
+
   // Sign-in errors and odd input.
   async "edge-cases"() {
     await call("welcome-done", { profile: {}, mode: "general" });
@@ -435,7 +497,7 @@ const SCENARIOS = {
     check("new chat forgets the old conversation", r.ok && /\bno\b/i.test(r.text), r.text);
   },
 };
-function SCENARIO_NAMES() { return ["first-run", "notifications", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
+function SCENARIO_NAMES() { return ["first-run", "notifications", "chatgpt", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
 
 // ---------- run ----------
 app.whenReady().then(async () => {

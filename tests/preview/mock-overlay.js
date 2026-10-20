@@ -22,10 +22,10 @@
       theme: { accent: "#d97757", opacity: 0.95 }, pill: { label: "Lock In", style: "island", nextTask: true, widgets: [], position: "center" }, shortcuts,
       hotkeys: { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S" },
       modes: [{ id: "general", name: "General", description: "", instructions: "", shortcuts, builtin: true }], activeMode: "general",
-      memoryEnabled: true, autoScan: true, notesSync: true, autoAllow: [], chatSpeed: "balanced", auth: { mode: "subscription", onboarded: true },
+      memoryEnabled: true, autoScan: true, notesSync: true, autoAllow: [], chatSpeed: "balanced", auth: { mode: "subscription", onboarded: true, provider: "chatgpt", aiName: "ChatGPT", claudeInstalled: true, codex: { installed: true, loggedIn: false, detail: "Not logged in" } },
       openAtLogin: true, notify, panels, building: false, version: "1.1.0",
     },
-    setNotify: notify, testNotify: true, getModes: { modes: [], active: "general" },
+    setNotify: notify, testNotify: true, codexStatus: { installed: true, loggedIn: true, detail: "Logged in using ChatGPT" }, getModes: { modes: [], active: "general" },
   };
   const handlers = {};
   const calls = [];
