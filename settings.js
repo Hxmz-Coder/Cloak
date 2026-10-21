@@ -145,6 +145,45 @@ $("memClear").onclick = async () => {
 };
 ov.onMemoriesChanged((list) => { if (!document.activeElement?.classList.contains("mem-text")) renderMemory(list); });
 
+// Files to remember
+function renderFiles(files = S.files || []) {
+  S.files = files;
+  $("fileCount").textContent = files.length ? `(${files.length})` : "";
+  const kb = (n) => (n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
+  $("fileList").innerHTML = files.map((f) => `
+    <div class="item" data-id="${esc(f.id)}">
+      <div class="file-ic">${esc((f.name.split(".").pop() || "").toUpperCase().slice(0, 4))}</div>
+      <div class="grow"><div class="t">${esc(f.name)} <span class="muted" style="font-weight:400">${kb(f.size)}</span></div>
+        <div class="d file-sum">${f.status === "ready" ? esc(f.summary) : f.status === "error" ? `<span class="err">${esc(f.error)}</span>` : "Reading it…"}</div></div>
+      <div class="acts">${f.status === "error" ? '<button class="btn ghost" data-a="retry">Try again</button>' : ""}
+        <button class="icon-btn" data-a="forget-file" title="Forget this file">${ICON.del}</button></div>
+    </div>`).join("");
+}
+async function addFiles(result) {
+  renderFiles(result.files);
+  $("fileStatus").innerHTML = result.errors?.length ? `<span class="err">${result.errors.map(esc).join("<br>")}</span>` : "";
+}
+$("filePick").onclick = async () => addFiles(await ov.pickMemoryFiles());
+const drop = $("fileDrop");
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, () => drop.classList.remove("over")));
+drop.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const paths = [...e.dataTransfer.files].map((f) => ov.pathForFile(f)).filter(Boolean);
+  if (paths.length) addFiles(await ov.addMemoryFiles(paths));
+});
+$("fileList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-a]");
+  if (!b) return;
+  const id = b.closest(".item").dataset.id;
+  if (b.dataset.a === "forget-file") renderFiles(await ov.removeMemoryFile(id));
+  if (b.dataset.a === "retry") renderFiles(await ov.retryMemoryFile(id));
+});
+ov.onMemoryFilesChanged(renderFiles);
+// Files dropped anywhere else in Settings shouldn't open in the window.
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => e.preventDefault());
+
 // ---------- shortcut buttons ----------
 let editingSc = null; // id being edited, "new" for a new one, or null
 function scKind(sc) {
@@ -534,7 +573,7 @@ $("restartApp").onclick = () => { $("restartApp").disabled = true; $("restartApp
 async function refresh() {
   S = await ov.getSettings();
   syncShortcutMode();
-  renderAppearance(); renderTop(); renderNotify(); renderMemory(await ov.listMemories()); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
+  renderAppearance(); renderTop(); renderNotify(); renderMemory(await ov.listMemories()); renderFiles(await ov.listMemoryFiles()); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
   $("openAtLogin").checked = S.openAtLogin;
   $("notesSync").checked = S.notesSync;
   $("pShowMode").checked = S.pill.showMode !== false;

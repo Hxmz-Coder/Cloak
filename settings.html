@@ -67,6 +67,11 @@
   .seg button.on { background: rgba(var(--accent-rgb), .16); color: var(--text); }
 
   /* lists */
+  .drop { border: 1.5px dashed var(--border); border-radius: 12px; padding: 14px; text-align: center; margin-bottom: 8px; font-size: 12.5px; }
+  .drop.over { border-color: var(--accent); background: rgba(var(--accent-rgb), .08); }
+  .file-sum { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .item:hover .file-sum { -webkit-line-clamp: unset; }
+  .file-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; background: rgba(var(--accent-rgb), .14); color: var(--accent); font-size: 9.5px; font-weight: 700; }
   .mem-text { outline: 0; border-radius: 6px; padding: 1px 4px; margin-left: -4px; cursor: text; user-select: text; }
   .mem-text:focus { background: rgba(255,255,255,.06); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .5); }
   .item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 6px; }
@@ -195,6 +200,13 @@
         </div>
         <h3>Remembered <small class="muted" id="memCount"></small></h3>
         <div id="memList"></div>
+        <h3>Files <small class="muted" id="fileCount"></small></h3>
+        <div class="drop" id="fileDrop">
+          <div><b>Drop PDFs, notes or images here</b><br><span class="muted">or</span> <button class="btn" id="filePick">Choose files…</button></div>
+          <p class="hint" style="margin:6px 0 0">The AI reads each one and keeps a summary in mind; it opens the file again when it needs the details. Cloak keeps its own copy.</p>
+        </div>
+        <div id="fileList"></div>
+        <div class="status" id="fileStatus"></div>
         <div class="btns" style="margin-top:8px"><button class="btn ghost" id="memClear">Forget everything</button></div>
       </section>
 

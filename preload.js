@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const on = (ch) => (cb) => ipcRenderer.on(ch, (_e, data) => cb(data));
 
@@ -85,6 +85,13 @@ contextBridge.exposeInMainWorld("overlay", {
   removeMemory: (id) => ipcRenderer.invoke("memories-remove", id),
   clearMemories: () => ipcRenderer.invoke("memories-clear"),
   onMemoriesChanged: on("memories-changed"),
+  listMemoryFiles: () => ipcRenderer.invoke("memory-files-list"),
+  pickMemoryFiles: () => ipcRenderer.invoke("memory-files-pick"),
+  addMemoryFiles: (paths) => ipcRenderer.invoke("memory-files-add", paths),
+  removeMemoryFile: (id) => ipcRenderer.invoke("memory-files-remove", id),
+  retryMemoryFile: (id) => ipcRenderer.invoke("memory-files-retry", id),
+  onMemoryFilesChanged: on("memory-files-changed"),
+  pathForFile: (file) => webUtils.getPathForFile(file), // a dropped file's location on disk
 
   // notes
   getNotes: () => ipcRenderer.invoke("notes-get"),

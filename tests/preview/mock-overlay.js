@@ -38,6 +38,10 @@
         { t: Date.now() - 10e3, kind: "ask", q: "What chapter are we on?", text: "Chapter seven, on cell respiration." },
       ],
     },
+    listMemoryFiles: [
+      { id: "f1", name: "AP Bio syllabus.pdf", size: 412000, status: "ready", summary: "The AP Biology syllabus for fall. Teacher: Ms. Rivera. Final exam December 12 at 9 AM in room B214. Lab notebooks due every Monday. Grading: tests 50%, labs 30%, homework 20%.", created: Date.now() },
+      { id: "f2", name: "Essay rubric.pdf", size: 98000, status: "reading", summary: "", created: Date.now() },
+    ],
     listMemories: [{ id: "m1", text: "My name is Sam and I take AP Biology.", source: "me", created: Date.now() - 864e5 }, { id: "m2", text: "The user's locker number is 214.", source: "claude", created: Date.now() }],
     setNotify: notify, testNotify: true, codexStatus: { installed: true, loggedIn: true, detail: "Logged in using ChatGPT" }, getModes: { modes: [], active: "general" },
   };

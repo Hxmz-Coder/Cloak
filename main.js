@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, clipboard, protocol, session, net, safeStorage, shell } = require("electron");
+const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, clipboard, protocol, session, net, safeStorage, shell, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -54,7 +54,7 @@ Screenshots: when the user's message lists screenshot paths, open them with the 
 
 Task list: the user has a task list widget. To add tasks to it, put a fenced code block with the language "tasks" in your reply, one task per line as "category | title | due | time", where category is homework, email, unfinished or other, due is an optional YYYY-MM-DD date, and time is an optional 24-hour HH:MM (only with a due date). Put dates and times in those fields, not in the title. Example: "homework | Study for biology quiz | 2026-10-17 | 16:00". The widget removes the block and adds the tasks. Add tasks when the user asks, or when you notice something they clearly need to do later. Don't add duplicates of their open tasks.
 
-Memory: the user can ask you to remember things. What they've asked you to remember is listed in the widget context with each message; use it. To save something new (when they ask you to remember it, or tell you a lasting fact or preference about themselves), put a fenced code block with the language "memory" in your reply, one fact per line, each a complete sentence that makes sense on its own later (e.g. "The user's biology exam is on Friday, October 23 at 3 PM."). The widget removes the block and saves it. Mention briefly that you'll remember it. Never save passwords or other secrets.
+Memory: the user can ask you to remember things. What they've asked you to remember is listed in the widget context with each message; use it. To save something new (when they ask you to remember it, or tell you a lasting fact or preference about themselves), put a fenced code block with the language "memory" in your reply, one fact per line, each a complete sentence that makes sense on its own later (e.g. "The user's biology exam is on Friday, October 23 at 3 PM."). The widget removes the block and saves it. Mention briefly that you'll remember it. Never save passwords or other secrets. Files the user saved to memory are listed there too, each with a summary and its path: open one with the Read tool when you need more than the summary.
 
 Notes: the user keeps personal notes in a notes widget. They are the user's own writing; you only see them when they're included in a message. Never rewrite or "submit" them.
 
@@ -74,7 +74,8 @@ function systemPrompt() {
   if (provider() !== "chatgpt") return SYSTEM;
   return SYSTEM.replace("You are Claude,", "You are ChatGPT,")
     .replace(/Some actions need the user's approval:[\s\S]*?never try to get around a block another way\./, CODEX_APPROVALS)
-    .replace("open them with the Read tool before answering", "they're attached to the message as images; look at them before answering");
+    .replace("open them with the Read tool before answering", "they're attached to the message as images; look at them before answering")
+    .replace("open one with the Read tool when you need more than the summary", "read the file at that path when you need more than the summary");
 }
 // Claude Code gets the instructions as a file argument; Codex reads AGENTS.md from its working folder.
 function writeInstructions() {
@@ -1032,6 +1033,25 @@ ipcMain.handle("widget-delete", (_e, id) => {
   broadcast("pill-changed", loadConfig().pill);
   return panelList();
 });
+// Calendar and Pomodoro come with Cloak (defaults/widgets/<id>: Claude-built widgets, like your own). Each is
+// installed once: if you already have it (maybe changed since) it's left alone, and if you delete it, it stays deleted.
+function seedDefaultWidgets() {
+  const dir = path.join(__dirname, "defaults", "widgets");
+  if (!fs.existsSync(dir)) return;
+  const seeded = new Set(loadConfig().seededWidgets || []);
+  for (const id of fs.readdirSync(dir)) {
+    if (seeded.has(id)) continue;
+    seeded.add(id);
+    if (widgets.meta(id)) continue;
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, id, "widget.json"), "utf8"));
+      const src = JSON.parse(fs.readFileSync(path.join(dir, id, "source.json"), "utf8"));
+      widgets.save({ ...src, name: meta.name, description: meta.description, width: meta.size?.[0], height: meta.size?.[1], request: meta.request }, id);
+    } catch {}
+  }
+  saveConfig({ seededWidgets: [...seeded] });
+}
+
 // Back to the built-in Tasks or Notes (your tasks and notes themselves aren't touched).
 ipcMain.handle("widget-restore", (_e, id) => {
   if (!isCustomized(id)) return panelList();
@@ -1248,6 +1268,59 @@ ipcMain.handle("memories-add", (_e, text) => { memories.add(String(text || "").s
 ipcMain.handle("memories-update", (_e, id, text) => { memories.update(id, text); return memories.list(); });
 ipcMain.handle("memories-remove", (_e, id) => { memories.remove(id); return memories.list(); });
 ipcMain.handle("memories-clear", () => { memories.clear(); return memories.list(); });
+// Files to remember (Settings > Memory): chosen in a dialog or dropped on the page.
+ipcMain.handle("memory-files-list", () => memories.files);
+ipcMain.handle("memory-files-pick", async () => {
+  const r = await dialog.showOpenDialog(panels.settings, { title: "Choose files to remember", properties: ["openFile", "multiSelections"],
+    filters: [{ name: "Documents and images", extensions: ["pdf", "txt", "md", "markdown", "csv", "json", "html", "htm", "png", "jpg", "jpeg", "webp", "gif"] }] });
+  return r.canceled ? { files: memories.files } : addMemoryFiles(r.filePaths);
+});
+ipcMain.handle("memory-files-add", (_e, paths) => addMemoryFiles([].concat(paths || []).map(String)));
+ipcMain.handle("memory-files-remove", (_e, id) => { memories.removeFile(id); return memories.files; });
+ipcMain.handle("memory-files-retry", (_e, id) => { const f = memories.files.find((x) => x.id === id); if (f) summarizeMemoryFile(f); return memories.files; });
+function addMemoryFiles(paths) {
+  const errors = [];
+  for (const p of paths) {
+    try { summarizeMemoryFile(memories.addFile(p)); } catch (e) { errors.push(e.message); }
+  }
+  return { files: memories.files, errors };
+}
+// The AI reads the file once and writes what it's about plus the key facts; that summary goes with every message.
+const FILE_SUMMARY_SCHEMA = {
+  type: "object",
+  properties: { summary: { type: "string", description: "What the file is, then its key facts, dates, names and numbers. Up to about 900 characters." } },
+  required: ["summary"], additionalProperties: false,
+};
+async function summarizeMemoryFile(f) {
+  memories.setFile(f.id, { status: "reading", error: undefined });
+  const ask = `The user saved this file so you'll remember it: "${f.name}". Write a compact summary that will be given to you in future conversations instead of the whole file: what it is (one line), then its key facts, dates, deadlines, names, numbers and anything the user would likely ask about. Up to about 900 characters.`;
+  let res;
+  if (provider() === "claude") {
+    res = await runAI({ cwd: workDir(), prompt: `${ask}
+
+Open it with the Read tool: ${f.path}`, tools: "Read", allowedTools: ["Read"], addDirs: [path.dirname(f.path)], jsonSchema: FILE_SUMMARY_SCHEMA, effort: "low", persist: false, timeoutMs: 5 * 60_000 }).done;
+  } else if (/\.(png|jpe?g|webp|gif)$/i.test(f.name)) {
+    res = await runAI({ cwd: path.dirname(f.path), prompt: `${ask}
+
+The image: ./${path.basename(f.path)}`, jsonSchema: FILE_SUMMARY_SCHEMA, effort: "low", timeoutMs: 5 * 60_000 }).done;
+  } else if (/\.pdf$/i.test(f.name)) {
+    res = { error: "ChatGPT can't read PDFs here yet. Switch to Claude in Settings > General and click Try again, or save the text as a .txt file." };
+  } else {
+    const text = fs.readFileSync(f.path, "utf8").slice(0, 60000);
+    res = await runAI({ cwd: workDir(), prompt: `${ask}
+
+The file:
+"""
+${text}
+"""`, jsonSchema: FILE_SUMMARY_SCHEMA, effort: "low", timeoutMs: 5 * 60_000 }).done;
+  }
+  if (!memories.files.some((x) => x.id === f.id)) return; // removed meanwhile
+  const err = res.error || (res.json?.is_error ? res.json.result : "");
+  let summary = res.json?.structured_output?.summary;
+  if (!err && !summary) { try { summary = JSON.parse(res.json.result).summary; } catch { summary = res.json?.result; } }
+  if (err || !summary) memories.setFile(f.id, { status: "error", error: aiError(err || "No summary came back.") });
+  else memories.setFile(f.id, { status: "ready", summary: String(summary).trim().slice(0, 1500) });
+}
 ipcMain.handle("tasks-list", () => tasks.list());
 ipcMain.handle("tasks-add", (_e, item) => tasks.add([item], "me"));
 ipcMain.handle("tasks-update", (_e, id, patch) => tasks.update(id, patch));
@@ -1336,7 +1409,8 @@ app.whenReady().then(() => {
   clearChatScreenshots();
 
   tasks = new TaskStore(path.join(userData(), "tasks.json"), (list) => broadcast("tasks-changed", list));
-  memories = new MemoryStore(path.join(userData(), "memories.json"), (list) => broadcast("memories-changed", list));
+  memories = new MemoryStore(path.join(userData(), "memories.json"), (list, files) => { broadcast("memories-changed", list); broadcast("memory-files-changed", files); });
+  for (const f of memories.files) if (f.status === "pending") summarizeMemoryFile(f);
   listener = makeListener();
   listener.auto = loadConfig().listenAuto !== false;
   // The computer's sound for Listen: Windows "loopback" capture. Only the Listen panel may ask for it.
@@ -1370,6 +1444,7 @@ app.whenReady().then(() => {
     if (!loadConfig().onboarded) openWelcome(); // first launch: the setup guide
   });
   widgets = new WidgetStore(path.join(userData(), "widgets"));
+  seedDefaultWidgets();
   setupWidgetSession();
   createPanel("tasks");
   createPanel("notes");

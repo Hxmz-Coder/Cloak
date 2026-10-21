@@ -1,0 +1,12 @@
+{
+  "id": "pomodoro-mvam2qxu",
+  "name": "Pomodoro",
+  "description": "A focus/break Pomodoro timer with optional on-task check-ins, daily session tracking and a live status in the top pill.",
+  "size": [
+    320,
+    420
+  ],
+  "created": 1792133604067,
+  "updated": 1792375877739,
+  "request": "A pomodoro focus timer: 25 minute focus, 5 minute break, with start/pause/reset and a count of sessions done today.\nChange: make me able to change the length of both breaks and work length. The button to start does not work as well. Keep track of my screen to make sure im on task and send a notif if i am not\nChange: remove the \"what task am i doing right now\""
+}

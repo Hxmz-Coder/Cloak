@@ -32,7 +32,7 @@ function dueLabel(due, time) {
   let text = days < -1 ? `overdue ${-days}d` : days === -1 ? "due yesterday" : days === 0 ? "due today" : days === 1 ? "due tomorrow"
     : days < 7 ? `due ${fromIso(due).toLocaleDateString([], { weekday: "short" })}` : `due ${fromIso(due).toLocaleDateString([], { month: "short", day: "numeric" })}`;
   if (time && days >= -1) text += ` ${fmtTime(time)}`;
-  return `<span class="due ${cls}">${text}</span>`;
+  return { html: `<span class="due ${cls}">${text}</span>`, cls };
 }
 
 // ---------- finding tasks ----------
@@ -55,24 +55,29 @@ function flash(text) {
 function row(t) {
   const el = document.createElement("div");
   el.className = `task${t.done ? " done" : ""}`;
+  const due = t.due && !t.done ? dueLabel(t.due, t.time) : null;
+  // Only the checkbox and title show; the rest appears when you hover the task.
   el.innerHTML = `
     <div class="box" title="${t.done ? "Mark not done" : "Mark done"}"></div>
     <div class="body">
       <div class="t">${esc(t.title)}</div>
-      <div class="m"><span class="cat ${esc(t.category)}">${esc(t.category)}</span>
-        ${t.due && !t.done ? " · " + dueLabel(t.due, t.time) : ""}
-        ${t.source === "claude" ? ' · <span class="from" title="' + esc(t.note || "Added by Claude") + '">from Claude</span>' : ""} · ${ago(t.created)}</div>
-      <div class="due-edit">
-        <input type="date" class="e-day" value="${esc(t.due || "")}" title="Day">
-        <input type="time" class="e-time" value="${esc(t.time || "")}" title="Time (optional)">
-        <button class="btn e-save">Save</button><button class="btn ghost e-clear">Clear</button>
-      </div>
+      <div class="details"><div>
+        <div class="m"><span class="cat ${esc(t.category)}">${esc(t.category)}</span>
+          ${due ? " · " + due.html : ""}
+          ${t.source === "claude" ? ' · <span class="from" title="' + esc(t.note || "Added by Claude") + '">from Claude</span>' : ""} · ${ago(t.created)}</div>
+        <div class="acts">
+          ${t.done ? "" : `<button class="icon-btn cal" title="${t.due ? "Change day and time" : "Set a day and time"}">${ICON_CAL}</button>`}
+          ${t.done ? "" : `<button class="icon-btn ask" title="Ask Claude to help with this">${ICON_ASK}</button>`}
+          <button class="icon-btn del" title="Delete">${ICON_DEL}</button>
+        </div>
+        <div class="due-edit">
+          <input type="date" class="e-day" value="${esc(t.due || "")}" title="Day">
+          <input type="time" class="e-time" value="${esc(t.time || "")}" title="Time (optional)">
+          <button class="btn e-save">Save</button><button class="btn ghost e-clear">Clear</button>
+        </div>
+      </div></div>
     </div>
-    <div class="acts">
-      ${t.done ? "" : `<button class="icon-btn cal" title="${t.due ? "Change day and time" : "Set a day and time"}">${ICON_CAL}</button>`}
-      ${t.done ? "" : `<button class="icon-btn ask" title="Ask Claude to help with this">${ICON_ASK}</button>`}
-      <button class="icon-btn del" title="Delete">${ICON_DEL}</button>
-    </div>`;
+    ${due?.cls ? `<div class="pip ${due.cls}" title="${due.cls === "late" ? "Overdue" : "Due soon"}"></div>` : ""}`;
   el.querySelector(".box").onclick = () => window.overlay.updateTask(t.id, { done: !t.done });
   el.querySelector(".del").onclick = () => window.overlay.removeTask(t.id);
   el.querySelector(".ask")?.addEventListener("click", () => window.overlay.taskHelp(t));
@@ -103,7 +108,7 @@ function render() {
   const done = tasks.filter((t) => t.done);
   $("count").textContent = open.length ? `${open.length} open` : "all clear";
   if (!open.length && !done.length) {
-    list.insertAdjacentHTML("beforeend", '<div class="empty">No tasks yet. Add one below. Claude also adds things it notices you still need to do, from your screen and your notes.</div>');
+    list.insertAdjacentHTML("beforeend", '<div class="empty">No tasks yet. Click + to add one. Claude also adds things it notices you still need to do, from your screen, your notes and Listen.</div>');
   }
   open.forEach((t) => list.appendChild(row(t)));
   if (done.length) {
@@ -130,23 +135,28 @@ window.overlay.onFocusTask((id) => {
 });
 window.overlay.onPanelShown(render);
 
-$("newTask").addEventListener("keydown", async (e) => {
-  if (e.key !== "Enter") return;
+function openAdd(on = !body.classList.contains("adding")) {
+  body.classList.toggle("adding", on);
+  $("addBtn").classList.toggle("on", on);
+  if (on) { window.overlay.focusPanel(); setTimeout(() => $("newTask").focus(), 30); }
+}
+async function addTask() {
   const title = $("newTask").value.trim();
-  if (!title) return;
+  if (!title) return $("newTask").focus();
   const due = $("newDue").value || undefined;
   await window.overlay.addTask({ title, category: $("newCat").value, due, time: due ? $("newTime").value || undefined : undefined });
-  $("newTask").value = "";
-  $("newDue").value = "";
-  $("newTime").value = "";
-  $("newDue").classList.remove("set");
-  document.querySelector(".addrow").classList.remove("has-day");
+  $("newTask").value = ""; $("newDue").value = ""; $("newTime").value = "";
+  $("newTask").focus(); // ready for the next one; Esc or Cancel closes
+}
+$("addBtn").onclick = () => openAdd();
+$("saveAdd").onclick = addTask;
+$("cancelAdd").onclick = () => openAdd(false);
+$("newTask").addEventListener("keydown", (e) => { if (e.key === "Enter") addTask(); });
+$("newDue").addEventListener("change", () => { if (!$("newDue").value) $("newTime").value = ""; }); // a time needs a day
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (body.classList.contains("adding")) openAdd(false); else window.overlay.hidePanel();
 });
-$("newDue").addEventListener("change", () => {
-  $("newDue").classList.toggle("set", !!$("newDue").value);
-  document.querySelector(".addrow").classList.toggle("has-day", !!$("newDue").value); // a time only makes sense with a day
-});
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") window.overlay.hidePanel(); });
 
 setInterval(render, 60_000); // refresh "x min ago"
 (async () => { tasks = await window.overlay.listTasks(); render(); })();

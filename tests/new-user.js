@@ -78,6 +78,20 @@ async function ask(text, label) {
   return { ...r, ms, text: r.text || "" };
 }
 const has = (s, re) => re.test(String(s || ""));
+// A small real PDF with lines of text (for Memory's saved files).
+function makePdf(file, lines) {
+  const text = lines.map((l, i) => `BT /F1 13 Tf 72 ${720 - i * 22} Td (${l.replace(/[()\\]/g, "")}) Tj ET`).join("\n");
+  const objs = ["<</Type/Catalog/Pages 2 0 R>>", "<</Type/Pages/Kids[3 0 R]/Count 1>>",
+    "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+    `<</Length ${text.length}>>\nstream\n${text}\nendstream`, "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>"];
+  let out = "%PDF-1.4\n";
+  const offs = objs.map((o, i) => { const at = out.length; out += `${i + 1} 0 obj\n${o}\nendobj\n`; return at; });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offs.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("") +
+    `trailer\n<</Size ${objs.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
+  fs.writeFileSync(file, out, "latin1");
+  return file;
+}
 
 // ---------- scenarios ----------
 const SCENARIOS = {
@@ -112,6 +126,15 @@ const SCENARIOS = {
     await js(w, `document.getElementById("shell").dispatchEvent(new Event("mouseenter")); return 1`); await wait(700);
     const tiles = await js(w, `return [...document.querySelectorAll(".tile")].map(t => t.innerText.trim())`);
     check("bar shows Homework shortcut buttons", tiles.includes("Check my work") && tiles.includes("Break into steps"), tiles.join(", "));
+    const builtIn = (await call("panel-show", "tasks")).map((p) => p.label);
+    check("Calendar and Pomodoro come built in", builtIn.includes("Calendar") && builtIn.includes("Pomodoro"), builtIn.join(", "));
+    for (const id of ["calendar-mvcx691f", "pomodoro-mvam2qxu"]) {
+      ipcMain.emit("toggle-panel", {}, id); await wait(1800);
+      const bw = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().includes(`/widget/${id}/`));
+      const errs = bw ? await js(bw, `return [...document.querySelectorAll(".widget-error")].map(e => e.textContent).join(" | ")`) : "no window";
+      check(`built-in ${id.split("-")[0]} opens without errors`, bw?.isVisible() && !errs, errs);
+      ipcMain.emit("toggle-panel", {}, id);
+    }
     const wb = await js(w, `return document.querySelectorAll("#wbtns .icon-btn").length`);
     check("widget buttons render (tasks, notes, open-all)", wb >= 3, wb);
 
@@ -134,10 +157,14 @@ const SCENARIOS = {
     // panels: open, add a task with a time, resize from an edge
     toggleAll(); await wait(1500);
     const t = await win("Claude Tasks");
+    await js(t, `document.getElementById("addBtn").click(); return 1`);
+    check("+ opens the add-task form", await js(t, `return getComputedStyle(document.querySelector(".addform")).display !== "none"`));
     await js(t, `document.getElementById("newTask").value = "Lab report"; document.getElementById("newDue").value = "${iso(1)}"; document.getElementById("newDue").dispatchEvent(new Event("change")); document.getElementById("newTime").value = "16:00"; document.getElementById("newTask").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" })); return 1`);
     await wait(600);
     const tl = await call("tasks-list");
     check("adding a task with a day and time from the panel", tl.some((x) => x.title === "Lab report" && x.due === iso(1) && x.time === "16:00"), JSON.stringify(tl));
+    const shown = await js(t, `const r = document.querySelector(".task"); return { details: getComputedStyle(r.querySelector(".details")).opacity, title: r.querySelector(".t").textContent }`);
+    check("a task shows just its title until you hover it", shown.title === "Lab report" && shown.details === "0", JSON.stringify(shown));
     const b0 = t.getBounds();
     await t.webContents.executeJavaScript(`window.overlay.setPanelBounds({ x: ${b0.x}, y: ${b0.y}, width: ${b0.width + 50}, height: ${b0.height + 40} })`);
     await wait(400);
@@ -384,7 +411,7 @@ const SCENARIOS = {
     check(`builds a widget (${Math.round((Date.now() - t0) / 1000)}s)`, w.ok, w.error);
     if (w.ok) {
       await wait(2500);
-      const ww = BrowserWindow.getAllWindows().find((x) => x.getTitle().startsWith("Claude Widget:"));
+      const ww = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().includes(`/widget/${w.widget.id}/`));
       const errs = await js(ww, `return [...document.querySelectorAll(".widget-error")].map(e => e.textContent).join(" | ")`);
       check("built widget loads without errors", ww && !errs, errs);
       const txt = await js(ww, `return document.getElementById("app").innerText`);
@@ -524,6 +551,19 @@ const SCENARIOS = {
     r = await ask("What's my locker number?");
     check("memories last beyond the conversation", r.ok && /214/.test(r.text), r.text || r.error);
 
+    // Files: a PDF the AI reads once and keeps a summary of.
+    const pdf = makePdf(path.join(profile, "syllabus.pdf"), ["AP Biology syllabus, fall semester", "Teacher: Ms. Rivera", "Final exam: December 12 at 9 AM in room B214", "Lab notebooks are due every Monday"]);
+    const added = await call("memory-files-add", [pdf]);
+    check("a PDF can be saved to memory", added.files?.length === 1 && !added.errors?.length, JSON.stringify(added));
+    let mf = [];
+    for (let i = 0; i < 90; i++) { mf = await call("memory-files-list"); if (mf[0]?.status !== "reading") break; await wait(2000); }
+    check("the AI reads it and keeps a summary", mf[0]?.status === "ready" && /B214/.test(mf[0].summary), JSON.stringify(mf[0]));
+    transcript.push({ label: "pdf summary", a: mf[0]?.summary || mf[0]?.error });
+    r = await ask("Where and when is my biology final exam?");
+    check("the chat answers from the saved PDF", r.ok && /B214/.test(r.text) && /December 12|Dec\.? 12/i.test(r.text), r.text || r.error);
+    const bad = await call("memory-files-add", [path.join(profile, "config.json").replace(/json$/, "exe")]);
+    check("unsupported files are refused clearly", bad.errors?.length === 1, JSON.stringify(bad.errors));
+
     const cap = await js(lp, `await startCapture(); const n = capture.stream.getAudioTracks().length; stopCapture(); return n`);
     check("captures the computer's sound (loopback)", cap === 1, cap);
     await call("listen-stop");
@@ -531,8 +571,10 @@ const SCENARIOS = {
 
     ipcMain.emit("open-settings", {}, "memory"); await wait(1500);
     const sw = await win("Claude Settings");
-    const mem = await js(sw, `return document.querySelectorAll("#memList .item").length`);
-    check("Settings > Memory lists what it remembers", mem >= 2, mem);
+    const mem = await js(sw, `return { facts: document.querySelectorAll("#memList .item").length, files: document.querySelectorAll("#fileList .item").length }`);
+    check("Settings > Memory lists what it remembers and its files", mem.facts >= 2 && mem.files === 1, JSON.stringify(mem));
+    await call("memory-files-remove", mf[0].id);
+    check("forgetting a file deletes Cloak's copy", !fs.existsSync(mf[0].path) && (await call("memory-files-list")).length === 0);
   },
 
   // Sign-in errors and odd input.

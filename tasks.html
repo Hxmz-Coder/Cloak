@@ -8,54 +8,65 @@
 <link rel="stylesheet" href="panel.css" />
 <style>
   .badge { background: rgba(227,184,107,.16); color: var(--warn); }
-  body.new .title small { color: var(--ok); }
+  #addBtn.on { color: var(--accent); background: var(--panel-hi); }
 
-  #list { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; padding: 4px 8px 6px; min-height: 0; }
-  .empty { color: var(--muted); font-size: 12.5px; padding: 18px 8px; text-align: center; }
+  /* add form: opens under the header from the + button */
+  .addform { display: none; flex-direction: column; gap: 7px; padding: 10px 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); }
+  body.adding .addform { display: flex; }
+  .addform input[type=text] { width: 100%; padding: 7px 10px; }
+  .addform .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .addform input[type=date] { width: 124px; padding: 5px 6px; font-size: 12px; }
+  .addform input[type=time] { width: 98px; padding: 5px 6px; font-size: 12px; }
+  .addform select { padding: 5px 6px; font-size: 12px; }
+  .addform .btn { padding: 5px 12px; }
+  .addform .push { margin-left: auto; display: flex; gap: 6px; }
+
+  #list { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; padding: 6px 8px; min-height: 0; }
+  .empty { color: var(--muted); font-size: 12.5px; padding: 22px 12px; text-align: center; line-height: 1.5; }
   .flash { color: var(--muted); font-size: 12px; padding: 8px 6px 2px; }
-  .task { display: flex; align-items: flex-start; gap: 9px; padding: 8px 6px; border-radius: 9px; }
-  .task:hover { background: var(--panel); }
-  .task.focus { background: rgba(var(--accent-rgb), .14); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .55); transition: background .6s, box-shadow .6s; }
-  .task + .task { border-top: 1px solid rgba(255,255,255,.04); }
-  .box { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--faint); flex-shrink: 0; margin-top: 2px; cursor: pointer;
-    display: grid; place-items: center; }
+
+  /* a task: just the checkbox and the title; hover (or the day/time editor) shows the rest */
+  .task { display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; border-radius: 9px; }
+  .task:hover, .task.editing { background: var(--panel); }
+  .box { width: 17px; height: 17px; border-radius: 50%; border: 1.5px solid var(--faint); flex-shrink: 0; margin-top: 1px; cursor: pointer;
+    display: grid; place-items: center; transition: border-color .12s, background .12s; }
   .box:hover { border-color: var(--accent); }
   .task.done .box { background: var(--ok); border-color: var(--ok); }
   .task.done .box::after { content: ""; width: 4px; height: 7px; border: solid #1a1a1a; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); }
   .body { flex: 1; min-width: 0; }
-  .body .t { font-size: 13px; line-height: 1.35; word-wrap: break-word; }
+  .body .t { font-size: 13.5px; line-height: 1.4; word-wrap: break-word; }
   .task.done .t { color: var(--muted); text-decoration: line-through; }
-  .body .m { font-size: 11px; color: var(--faint); margin-top: 2px; }
+  /* due soon / late: a small dot, the only hint shown without hovering */
+  .pip { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; margin-top: 7px; }
+  .pip.soon { background: var(--warn); } .pip.late { background: #ff9b8a; }
+  .task:hover .pip, .task.editing .pip { display: none; }
+  .details { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .16s ease, opacity .16s ease; }
+  .details > div { overflow: hidden; }
+  .task:hover .details, .task.editing .details, .task.focus .details { grid-template-rows: 1fr; opacity: 1; }
+  .m { font-size: 11px; color: var(--faint); margin-top: 3px; }
   .cat { font-weight: 600; }
   .cat.homework { color: #8fb3e8; } .cat.email { color: var(--accent-2); } .cat.unfinished { color: var(--warn); } .cat.other { color: var(--muted); }
   .from { color: var(--ok); }
-  .acts { display: none; gap: 2px; }
-  .task:hover .acts { display: flex; }
-  .acts .icon-btn { width: 24px; height: 24px; }
-  .acts .icon-btn svg { width: 14px; height: 14px; }
-  .section { display: flex; align-items: center; gap: 8px; padding: 8px 6px 2px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
-  .section .clear { margin-left: auto; background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 11.5px; }
-  .section .clear:hover { color: var(--accent); }
-
-  .addrow { display: flex; gap: 6px; padding: 8px 14px 10px 8px; border-top: 1px solid var(--border); flex-shrink: 0; }
-  .addrow input { flex: 1; min-width: 0; padding: 6px 10px; }
-  .addrow select { padding: 6px 6px; font-size: 12px; }
-  .addrow input[type=date] { flex: 0 0 auto; width: 34px; padding: 6px 4px; color: transparent; cursor: pointer; }
-  .addrow input[type=date].set { width: 112px; color: var(--text); }
-  input[type=date] { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; font: inherit; font-size: 12px; outline: 0; color-scheme: dark; }
   .due { color: var(--muted); }
   .due.soon { color: var(--warn); font-weight: 600; }
   .due.late { color: #ff9b8a; font-weight: 600; }
-  .addrow input[type=time] { display: none; flex: 0 0 auto; width: 96px; padding: 6px 6px; }
-  .addrow.has-day input[type=time] { display: block; }
-  input[type=time] { font-size: 12px; }
-  /* inline due date/time editor under a task */
+  .acts { display: flex; gap: 2px; margin-top: 4px; margin-left: -4px; }
+  .acts .icon-btn { width: 26px; height: 26px; }
+  .acts .icon-btn svg { width: 14px; height: 14px; }
+  .task.focus { background: rgba(var(--accent-rgb), .14); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .55); transition: background .6s, box-shadow .6s; }
+
+  .section { display: flex; align-items: center; gap: 8px; padding: 10px 8px 2px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+  .section .clear { margin-left: auto; background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 11.5px; }
+  .section .clear:hover { color: var(--accent); }
+
+  /* day and time editor, opened from the calendar button */
   .due-edit { display: none; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
   .task.editing .due-edit { display: flex; }
   .due-edit input { padding: 4px 6px; font-size: 12px; }
   .due-edit input[type=date] { width: 122px; }
   .due-edit input[type=time] { width: 96px; }
   .due-edit .btn { padding: 3px 9px; font-size: 11.5px; }
+  input[type=date], input[type=time] { color-scheme: dark; }
 </style>
 </head>
 <body>
@@ -63,23 +74,28 @@
   <div class="phead" title="Drag to move">
     <div class="badge"><svg viewBox="0 0 24 24"><path d="M5 12l5 5L19 7"/></svg></div>
     <div class="title">Tasks <small id="count"></small></div>
+    <button class="icon-btn" id="addBtn" title="Add a task">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
     <button class="icon-btn" id="scanBtn" title="Look for new tasks in what I've been doing and in my notes">
       <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg></button>
     <button class="icon-btn min" title="Minimize (Ctrl+Shift+Space brings it back)">
       <svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
   </div>
-  <div id="list"></div>
-  <div class="addrow">
-    <input type="text" id="newTask" placeholder="Add a task…" maxlength="200" />
-    <input type="date" id="newDue" title="Due date (optional)" />
-    <input type="time" id="newTime" title="Time (optional)" />
-    <select id="newCat">
-      <option value="other">Other</option>
-      <option value="homework">Homework</option>
-      <option value="email">Email</option>
-      <option value="unfinished">Unfinished</option>
-    </select>
+  <div class="addform">
+    <input type="text" id="newTask" placeholder="What needs doing?" maxlength="200" />
+    <div class="row">
+      <input type="date" id="newDue" title="Due date (optional)" />
+      <input type="time" id="newTime" title="Time (optional, needs a day)" />
+      <select id="newCat" title="Category">
+        <option value="other">Other</option>
+        <option value="homework">Homework</option>
+        <option value="email">Email</option>
+        <option value="unfinished">Unfinished</option>
+      </select>
+      <div class="push"><button class="btn ghost" id="cancelAdd">Cancel</button><button class="btn primary" id="saveAdd">Add</button></div>
+    </div>
   </div>
+  <div id="list"></div>
   <div class="grip" title="Resize"></div>
 </div>
 <script src="theme.js"></script>

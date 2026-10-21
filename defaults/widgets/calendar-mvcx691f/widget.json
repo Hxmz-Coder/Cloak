@@ -1,0 +1,12 @@
+{
+  "id": "calendar-mvcx691f",
+  "name": "Calendar",
+  "description": "A month calendar where you can add events and activities (including repeating ones), add and schedule your tasks by due date, and filter what's shown by category.",
+  "size": [
+    440,
+    640
+  ],
+  "created": 1792273175620,
+  "updated": 1792273175620,
+  "request": "Make a calender widget that i can add events and activites im doing, make it also be able to add my tasks and when they are due and theres an ability to filter what i can see (if an event is under 'homework' or such i can filter them out or filter to only see just that)"
+}
