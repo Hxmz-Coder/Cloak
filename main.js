@@ -13,6 +13,7 @@ const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widge
 const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
 const { DEFAULT_NOTIFY, NotifyState, taskNotifications } = require("./lib/notify");
 const codex = require("./lib/codex");
+const { openTerminal: openTerminalWindow } = require("./lib/terminal");
 
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -956,7 +957,7 @@ ipcMain.handle("auth-test", async () => {
 function openTerminal(script) {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY; // signing in should use your Claude account, not a key from the environment
-  spawn("powershell.exe", ["-NoExit", "-NoProfile", "-Command", script], { detached: true, stdio: "ignore", env }).unref();
+  openTerminalWindow(script, { env });
 }
 ipcMain.on("install-claude", () => openTerminal(
   "Write-Host 'Installing Claude Code (official installer from claude.ai)...' -ForegroundColor Cyan; " +
