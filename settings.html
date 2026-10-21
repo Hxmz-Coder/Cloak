@@ -67,6 +67,8 @@
   .seg button.on { background: rgba(var(--accent-rgb), .16); color: var(--text); }
 
   /* lists */
+  .mem-text { outline: 0; border-radius: 6px; padding: 1px 4px; margin-left: -4px; cursor: text; user-select: text; }
+  .mem-text:focus { background: rgba(255,255,255,.06); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .5); }
   .item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 6px; }
   .item .grow { flex: 1; min-width: 0; }
   .item .t { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -111,6 +113,7 @@
       <button data-s="appearance">Appearance</button>
       <button data-s="top">Top widget</button>
       <button data-s="notify">Notifications</button>
+      <button data-s="memory">Memory</button>
       <button data-s="modes">Modes</button>
       <button data-s="shortcuts">Shortcut buttons</button>
       <button data-s="widgets">Widgets</button>
@@ -176,9 +179,23 @@
         <div class="row"><div class="grow"><div class="t">Answers and approvals</div><div class="d">When Claude finishes answering, or needs your OK, while you're doing something else.</div></div><label class="switch"><input type="checkbox" data-n="answers"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">New tasks</div><div class="d">When Claude finds tasks in your notes or what you've been doing.</div></div><label class="switch"><input type="checkbox" data-n="found"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">Widget alerts</div><div class="d">When one of your widgets has something happening now, like a timer finishing.</div></div><label class="switch"><input type="checkbox" data-n="widgets"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Listen</div><div class="d">When Listen hears a question you may need to answer, or a deadline or instruction.</div></div><label class="switch"><input type="checkbox" data-n="listen"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">Play a sound</div></div><label class="switch"><input type="checkbox" data-n="sound"><span></span></label></div>
         </div>
         <div class="btns" style="margin-top:12px"><button class="btn" id="nTest">Send a test notification</button><button class="btn ghost" id="nPause">Pause for 1 hour</button></div>
+      </section>
+
+      <!-- Memory -->
+      <section id="s-memory">
+        <h2>Memory</h2>
+        <p class="lead">Things the AI remembers about you and uses in every chat and Listen response. Add them here, or just tell it in the chat, for example "remember that my exam is on Friday". It stays on this PC.</p>
+        <div class="builder">
+          <textarea id="memText" placeholder="Something to remember, e.g. I'm in 11th grade and take AP Biology. (One per line to add several.)"></textarea>
+          <div class="btns"><button class="btn primary" id="memAdd">Remember</button><div class="status" id="memStatus"></div></div>
+        </div>
+        <h3>Remembered <small class="muted" id="memCount"></small></h3>
+        <div id="memList"></div>
+        <div class="btns" style="margin-top:8px"><button class="btn ghost" id="memClear">Forget everything</button></div>
       </section>
 
       <!-- Modes -->

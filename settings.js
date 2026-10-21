@@ -104,6 +104,47 @@ $("s-notify").addEventListener("change", (e) => { const k = e.target.dataset.n; 
 $("nPause").onclick = () => saveNotify({ pausedUntil: S.notify.pausedUntil > Date.now() ? 0 : Date.now() + 3600_000 });
 $("nTest").onclick = () => ov.testNotify();
 
+// ---------- memory ----------
+function renderMemory(list = S.memories || []) {
+  S.memories = list;
+  $("memCount").textContent = list.length ? `(${list.length})` : "";
+  $("memList").innerHTML = list.length ? list.map((m) => `
+    <div class="item" data-id="${esc(m.id)}">
+      <div class="grow"><div class="t mem-text" contenteditable="plaintext-only" spellcheck="true" title="Click to edit">${esc(m.text)}</div>
+        <div class="d">${m.source === "claude" ? "Saved from a chat" : "Added by you"} · ${new Date(m.created).toLocaleDateString([], { month: "short", day: "numeric" })}</div></div>
+      <div class="acts"><button class="icon-btn" data-a="forget" title="Forget this">${ICON.del}</button></div>
+    </div>`).join("") : '<p class="hint">Nothing yet.</p>';
+}
+$("memAdd").onclick = async () => {
+  const text = $("memText").value.trim();
+  if (!text) return $("memText").focus();
+  renderMemory(await ov.addMemory(text));
+  $("memText").value = "";
+  $("memStatus").innerHTML = '<span class="ok">Remembered.</span>';
+  setTimeout(() => ($("memStatus").innerHTML = ""), 2500);
+};
+$("memText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) $("memAdd").click(); });
+$("memList").addEventListener("click", async (e) => {
+  const b = e.target.closest('[data-a="forget"]');
+  if (b) renderMemory(await ov.removeMemory(b.closest(".item").dataset.id));
+});
+// Edit in place: saved when you click away (or press Enter).
+$("memList").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.classList.contains("mem-text")) { e.preventDefault(); e.target.blur(); } });
+$("memList").addEventListener("focusout", async (e) => {
+  if (!e.target.classList.contains("mem-text")) return;
+  const id = e.target.closest(".item").dataset.id, text = e.target.textContent.trim();
+  const old = S.memories.find((m) => m.id === id)?.text;
+  if (text && text !== old) renderMemory(await ov.updateMemory(id, text));
+  else if (!text) e.target.textContent = old || "";
+});
+$("memClear").onclick = async () => {
+  const b = $("memClear");
+  if (b.dataset.confirm !== "1") { b.dataset.confirm = "1"; b.textContent = "Click again to forget everything"; return; }
+  b.dataset.confirm = ""; b.textContent = "Forget everything";
+  renderMemory(await ov.clearMemories());
+};
+ov.onMemoriesChanged((list) => { if (!document.activeElement?.classList.contains("mem-text")) renderMemory(list); });
+
 // ---------- shortcut buttons ----------
 let editingSc = null; // id being edited, "new" for a new one, or null
 function scKind(sc) {
@@ -229,7 +270,7 @@ $("bBuild").onclick = async () => {
 
 function renderWidgets() {
   const tag = (p) => (!p.builtin ? '<span class="tag">made by Claude</span>' : p.customized ? '<span class="tag">changed by Claude</span>' : '<span class="tag">built-in</span>');
-  const about = (p) => (!p.builtin ? p.description : p.name === "tasks" ? "Your task list." : "Your notes; Claude can find tasks in them.");
+  const about = (p) => (!p.builtin ? p.description : p.name === "tasks" ? "Your task list." : p.name === "listen" ? "Turns what's playing on your computer into text, and the AI responds to it." : "Your notes; Claude can find tasks in them.");
   const hint = (p) => (p.name === "tasks" ? "e.g. Group tasks by category, and add a progress bar for today."
     : p.name === "notes" ? "e.g. Add a word count, and make headings bigger."
     : "e.g. Add a button to jump to today, and color tasks by category.");
@@ -239,7 +280,7 @@ function renderWidgets() {
         <div class="d">${esc(about(p))}</div></div>
       <div class="acts">
         <button class="icon-btn" data-a="open" title="Show it now">${ICON.open}</button>
-        <button class="btn ghost needs-idle" data-a="change">Change…</button>
+        ${p.builtin && !p.editable ? "" : `<button class="btn ghost needs-idle" data-a="change">Change…</button>`}
         ${p.canUndo ? `<button class="btn ghost needs-idle" data-a="undo" title="Go back to the previous version">Undo</button>` : ""}
         ${p.customized ? `<button class="btn ghost needs-idle" data-a="restore" title="Go back to the original ${esc(p.label)}. Your ${p.name === "tasks" ? "tasks" : "notes"} stay as they are.">Restore original</button>` : ""}
         ${p.builtin ? "" : `<button class="icon-btn" data-a="del" title="Delete">${ICON.del}</button>`}
@@ -493,7 +534,7 @@ $("restartApp").onclick = () => { $("restartApp").disabled = true; $("restartApp
 async function refresh() {
   S = await ov.getSettings();
   syncShortcutMode();
-  renderAppearance(); renderTop(); renderNotify(); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
+  renderAppearance(); renderTop(); renderNotify(); renderMemory(await ov.listMemories()); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
   $("openAtLogin").checked = S.openAtLogin;
   $("notesSync").checked = S.notesSync;
   $("pShowMode").checked = S.pill.showMode !== false;

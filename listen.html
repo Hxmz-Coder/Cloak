@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' blob: mediastream:" />
+<title>Claude Listen</title>
+<link rel="stylesheet" href="theme.css" />
+<link rel="stylesheet" href="panel.css" />
+<style>
+  .badge { background: rgba(255,138,122,.14); color: #ff8a7a; }
+  body.listening .badge { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(255,138,122,.18); } }
+
+  .setup { margin: 14px; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border); }
+  .setup h4 { margin: 0 0 6px; font-size: 13.5px; }
+  .setup p { margin: 0 0 10px; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+  .setup ul { margin: 0 0 12px; padding-left: 18px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  body.ready .setup { display: none; }
+  body:not(.ready) .main { display: none !important; }
+
+  .main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .ctl { display: flex; align-items: center; gap: 10px; padding: 10px 12px 8px; }
+  #toggle { display: inline-flex; align-items: center; gap: 7px; }
+  #toggle i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  body.listening #toggle { background: rgba(255,138,122,.14); border-color: rgba(255,138,122,.45); color: #ffb3a8; }
+  body.listening #toggle i { border-radius: 2px; }
+  .status { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status.err { color: #ff9b8a; white-space: normal; }
+  .meter { display: flex; align-items: flex-end; gap: 2px; height: 16px; }
+  .meter span { width: 3px; border-radius: 2px; background: var(--faint); height: 3px; transition: height .12s; }
+  body.listening .meter span { background: #ff8a7a; }
+
+  .tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+  .tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 7px 10px; cursor: pointer; color: var(--muted); font-size: 12.5px; }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+  .tabs .right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+  .tabs .icon-btn { width: 26px; height: 26px; }
+  .tabs .icon-btn svg { width: 14px; height: 14px; }
+  .pane { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 10px; user-select: text; }
+  .pane:not(.on) { display: none; }
+  .empty { color: var(--faint); font-size: 12.5px; text-align: center; padding: 22px 10px; line-height: 1.5; }
+
+  .card { padding: 9px 11px; border-radius: 11px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 7px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
+  .card.important { border-color: rgba(var(--accent-rgb), .6); background: rgba(var(--accent-rgb), .09); }
+  .card.error { color: #ff9b8a; }
+  .card .q { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .card .when { display: block; margin-top: 4px; font-size: 10.5px; color: var(--faint); }
+  .card.thinking { color: var(--muted); font-style: italic; }
+  .line { font-size: 13px; line-height: 1.5; margin-bottom: 5px; }
+  .line time { color: var(--faint); font-size: 10.5px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+  .ask { display: flex; gap: 6px; align-items: center; padding: 8px 14px 10px 10px; border-top: 1px solid var(--border); }
+  .ask input { flex: 1; min-width: 0; padding: 6px 10px; }
+  .auto { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .auto input { accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="phead" title="Drag to move">
+    <div class="badge"><svg viewBox="0 0 24 24"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2"/></svg></div>
+    <div class="title">Listen <small id="sub"></small></div>
+    <button class="icon-btn min" title="Minimize (keeps listening; Ctrl+Shift+Space brings it back)">
+      <svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+  </div>
+
+  <div class="setup">
+    <h4>Let the AI listen along</h4>
+    <p>Listen turns whatever is playing on your computer, like a class, a meeting, a call or a video, into text, and the AI responds to it.</p>
+    <ul>
+      <li>It answers questions as they're asked, and points out deadlines and instructions.</li>
+      <li>It adds assignments it hears to your Tasks.</li>
+      <li>You can ask it anything about what was said.</li>
+    </ul>
+    <p>Speech is turned into text right here on your PC, so the audio never leaves it. Setting up downloads the speech engine once (about 500 MB).</p>
+    <button class="btn primary" id="setupBtn">Set up Listen</button>
+    <div class="status" id="setupStatus" style="margin-top:8px;white-space:normal"></div>
+  </div>
+
+  <div class="main">
+    <div class="ctl">
+      <button class="btn" id="toggle"><i></i><span>Start listening</span></button>
+      <div class="status" id="status">Listens to your computer's sound, not your microphone.</div>
+      <div class="meter" id="meter"><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
+    <div class="tabs">
+      <button data-tab="feed" class="on">Responses</button>
+      <button data-tab="text">Transcript</button>
+      <div class="right">
+        <button class="icon-btn" id="respondNow" title="Respond to what was just said"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg></button>
+        <button class="icon-btn" id="copyBtn" title="Copy the transcript"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+        <button class="icon-btn" id="clearBtn" title="Clear the transcript and responses"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button>
+      </div>
+    </div>
+    <div class="pane on" id="feed"></div>
+    <div class="pane" id="text"></div>
+    <div class="ask">
+      <input type="text" id="askInput" placeholder="Ask about what you heard…" maxlength="500" />
+      <label class="auto" title="Respond on its own when it hears a question, a deadline or something important"><input type="checkbox" id="auto" checked /> Auto</label>
+    </div>
+  </div>
+  <div class="grip" title="Resize"></div>
+</div>
+<script src="theme.js"></script>
+<script src="panel.js"></script>
+<script src="listen.js"></script>
+</body>
+</html>

@@ -9,6 +9,8 @@ const { ChatSession } = require("./lib/chat");
 const { TOOLS, AUTO_ALLOWED, describeDenial } = require("./lib/permissions");
 const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
+const { MemoryStore, extractMemoryBlocks } = require("./lib/memories");
+const { Listener } = require("./lib/listen");
 const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widgets");
 const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
 const { DEFAULT_NOTIFY, NotifyState, taskNotifications } = require("./lib/notify");
@@ -51,6 +53,8 @@ Some actions need the user's approval: shell commands that change things, creati
 Screenshots: when the user's message lists screenshot paths, open them with the Read tool before answering.
 
 Task list: the user has a task list widget. To add tasks to it, put a fenced code block with the language "tasks" in your reply, one task per line as "category | title | due | time", where category is homework, email, unfinished or other, due is an optional YYYY-MM-DD date, and time is an optional 24-hour HH:MM (only with a due date). Put dates and times in those fields, not in the title. Example: "homework | Study for biology quiz | 2026-10-17 | 16:00". The widget removes the block and adds the tasks. Add tasks when the user asks, or when you notice something they clearly need to do later. Don't add duplicates of their open tasks.
+
+Memory: the user can ask you to remember things. What they've asked you to remember is listed in the widget context with each message; use it. To save something new (when they ask you to remember it, or tell you a lasting fact or preference about themselves), put a fenced code block with the language "memory" in your reply, one fact per line, each a complete sentence that makes sense on its own later (e.g. "The user's biology exam is on Friday, October 23 at 3 PM."). The widget removes the block and saves it. Mention briefly that you'll remember it. Never save passwords or other secrets.
 
 Notes: the user keeps personal notes in a notes widget. They are the user's own writing; you only see them when they're included in a message. Never rewrite or "submit" them.
 
@@ -97,6 +101,7 @@ const WIDGET = { pill: [160, 58], bar: [680, 150], chat: [680, 620], edit: [680,
 const PANELS = {
   tasks: { file: "tasks.html", size: [360, 440], min: [260, 200], label: "Tasks" },
   notes: { file: "notes.html", size: [380, 460], min: [260, 200], label: "Notes" },
+  listen: { file: "listen.html", size: [400, 540], min: [300, 320], label: "Listen" },
   settings: { file: "settings.html", size: [800, 600], min: [800, 600], label: "Settings", standalone: true, fixed: true },
   welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
@@ -109,7 +114,7 @@ const AUTO_SCAN_EVERY_MS = 40 * 60_000;
 
 let widget, tray;
 const panels = {};     // name -> BrowserWindow
-let memory, tasks, widgets;
+let memory, tasks, widgets, memories, listener;
 let building = false;
 const widgetIdBySender = new Map(); // webContents id -> custom widget id
 const widgetStatus = {};            // custom widget id -> status line it offers the pill
@@ -292,6 +297,7 @@ function createPanel(name) {
   };
   win.on("move", remember);
   win.on("resize", remember);
+  if (name === "listen") win.webContents.setBackgroundThrottling(false); // keeps capturing while minimized
   // Closed some other way than our hide (e.g. Alt+F4): forget it, or the next click hits a destroyed window.
   const wcId = win.webContents.id;
   win.on("closed", () => {
@@ -416,7 +422,11 @@ function saveHistory(messages) {
 
 // display: what to show as your message in the chat (null for follow-ups like approvals).
 async function chatTurn(prompt, { display = null, image = false, extraAllowed = [] } = {}) {
-  const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}]` +
+  const remembered = memories.context();
+  const heard = listenContext(5);
+  const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}` +
+    (remembered ? `\nThings the user asked you to remember:\n${remembered}` : "") +
+    (heard ? `\nListen is on. What's been playing on the user's computer (last few minutes, transcribed):\n${heard}` : "") + "]" +
     (declinedNote ? `\n[Widget: ${declinedNote}]` : "");
   declinedNote = "";
   const full = `${context}\n\n${prompt}`;
@@ -444,7 +454,9 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
 
   let text = json.result || "";
   if (json.subtype === "error_max_turns") text += "\n\n_(Stopped after too many steps. Say \"continue\" to keep going.)_";
-  const { text: cleaned, items } = extractTaskBlocks(text);
+  const { text: noMemory, facts } = extractMemoryBlocks(text);
+  const learned = facts.length ? memories.add(facts, "claude") : [];
+  const { text: cleaned, items } = extractTaskBlocks(noMemory);
   const added = items.length ? tasks.add(items, "claude") : []; // the reply says so (and the answer notification, if you're away)
 
   pendingApprovals = new Map();
@@ -453,7 +465,7 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
   const shown = approvals.length ? tidyBlockedText(cleaned) : cleaned;
   history.push({ role: "bot", text: shown, time: Date.now() });
   saveHistory(history);
-  return { ok: true, text: shown, approvals, tasksAdded: added.map((t) => t.title) };
+  return { ok: true, text: shown, approvals, tasksAdded: added.map((t) => t.title), remembered: learned.map((m) => m.text) };
 }
 
 // The CLI tells Claude "no prompt could be shown", and Claude tends to repeat that. The widget's Allow
@@ -558,7 +570,7 @@ function broadcast(ch, data) {
 
 // ---------- notifications ----------
 // They pop out of the top widget (renderer.js). Clicking one opens where it came from (its target).
-const NOTIFY_SETTING = { deadline: "deadlines", checkin: "checkins", digest: "digest", answer: "answers", approval: "answers", found: "found", widget: "widgets" };
+const NOTIFY_SETTING = { deadline: "deadlines", checkin: "checkins", digest: "digest", answer: "answers", approval: "answers", found: "found", widget: "widgets", listen: "listen" };
 const notifyCfg = () => ({ ...DEFAULT_NOTIFY, ...loadConfig().notify });
 const shownNotes = new Map(); // id -> notification on screen or waiting
 let notifySeq = 0, notifyState = null, shownForNotify = false;
@@ -860,7 +872,8 @@ function syncLoginItem() {
 
 function panelList() {
   const cfg = loadConfig();
-  const list = ["tasks", "notes"].map((name) => ({ name, label: PANELS[name].label, builtin: true, customized: isCustomized(name), canUndo: isCustomized(name) && widgets.canUndo(name) }));
+  const list = ["tasks", "notes", "listen"].map((name) => ({ name, label: PANELS[name].label, builtin: true, editable: EDITABLE_BUILTINS.has(name),
+    customized: isCustomized(name), canUndo: isCustomized(name) && widgets.canUndo(name), active: name === "listen" && !!listener?.listening }));
   for (const m of widgets.list().filter((w) => !PANELS[w.id])) list.push({ name: m.id, label: m.name, description: m.description, builtin: false, canUndo: widgets.canUndo(m.id), updated: m.updated });
   return list.map((p) => ({ ...p, enabled: cfg.panelEnabled[p.name] !== false, visible: !!panels[p.name]?.isVisible() }));
 }
@@ -1197,6 +1210,44 @@ ipcMain.handle("decline", (_e, { ids }) => {
 });
 
 ipcMain.handle("scan-tasks", (_e, sources) => scanTasks(sources));
+
+// ---------- Listen (lib/listen.js) ----------
+// What's been playing on the computer lately, for the chat's context while Listen is on.
+const listenContext = (minutes) => (listener?.listening ? listener.recent(minutes, 3000) : "");
+function makeListener() {
+  return new Listener(path.join(userData(), "voice"), {
+    emit: (ch, data) => { panels.listen?.webContents.send(ch, data); if (ch === "listen-state") notifyPanels(); },
+    runAI: (opts) => runAI({ cwd: workDir(), tools: "", persist: false, ...(provider() === "claude" ? { model: (CHAT_SPEEDS[loadConfig().chatSpeed] || CHAT_SPEEDS.balanced).model } : {}), ...opts }),
+    aiError: (t) => aiError(t),
+    memories: () => memories.context(),
+    today: () => todayLine(),
+    addTasks: (items) => {
+      const added = tasks.add(items, "claude");
+      if (added.length) pushNotification({ kind: "found", title: `Added ${added.length} task${added.length > 1 ? "s" : ""} from Listen`,
+        body: added.map((t) => t.title).slice(0, 2).join(", "), target: { type: "tasks", taskId: added[0].id } });
+    },
+    onImportant: (item) => pushNotification({ kind: "listen", urgent: true, title: "Listen", body: item.text, target: { type: "panel", name: "listen" } }),
+  });
+}
+ipcMain.handle("listen-status", () => listener.status());
+ipcMain.handle("listen-install", () => listener.install());
+ipcMain.handle("listen-start", () => listener.start());
+ipcMain.handle("listen-stop", () => { listener.stop(); return true; });
+ipcMain.handle("listen-clear", () => { listener.clear(); return true; });
+ipcMain.handle("listen-set-auto", (_e, on) => { listener.auto = !!on; saveConfig({ listenAuto: !!on }); return listener.status(); });
+ipcMain.handle("listen-respond-now", () => listener.respond());
+ipcMain.handle("listen-ask", (_e, q) => listener.ask(q));
+// A clip of the computer's sound from the Listen panel (16 kHz mono Float32Array).
+ipcMain.handle("voice-transcribe", (e, pcm) => {
+  if (e.sender && panels.listen?.webContents !== e.sender) return { error: "Not the Listen panel." }; // (no sender: a test script)
+  return listener.transcribe(pcm instanceof Float32Array ? pcm : new Float32Array(pcm || []));
+});
+// Settings > Memory
+ipcMain.handle("memories-list", () => memories.list());
+ipcMain.handle("memories-add", (_e, text) => { memories.add(String(text || "").split(/\r?\n/), "me"); return memories.list(); });
+ipcMain.handle("memories-update", (_e, id, text) => { memories.update(id, text); return memories.list(); });
+ipcMain.handle("memories-remove", (_e, id) => { memories.remove(id); return memories.list(); });
+ipcMain.handle("memories-clear", () => { memories.clear(); return memories.list(); });
 ipcMain.handle("tasks-list", () => tasks.list());
 ipcMain.handle("tasks-add", (_e, item) => tasks.add([item], "me"));
 ipcMain.handle("tasks-update", (_e, id, patch) => tasks.update(id, patch));
@@ -1259,6 +1310,7 @@ function buildTray() {
     { label: `Show / hide everything    ${prettyKey(cfg.hotkeys.toggle)}`, click: toggleAll },
     { label: "Tasks", click: () => togglePanel("tasks") },
     { label: "Notes", click: () => togglePanel("notes") },
+    { label: "Listen", click: () => togglePanel("listen") },
     { label: "Mode", submenu: modeMenuItems() },
     { label: "Settings", click: () => openSettings() },
     { label: "Setup guide", click: () => openWelcome() },
@@ -1284,6 +1336,14 @@ app.whenReady().then(() => {
   clearChatScreenshots();
 
   tasks = new TaskStore(path.join(userData(), "tasks.json"), (list) => broadcast("tasks-changed", list));
+  memories = new MemoryStore(path.join(userData(), "memories.json"), (list) => broadcast("memories-changed", list));
+  listener = makeListener();
+  listener.auto = loadConfig().listenAuto !== false;
+  // The computer's sound for Listen: Windows "loopback" capture. Only the Listen panel may ask for it.
+  session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
+    if (!panels.listen || req.frame?.url !== panels.listen.webContents.getURL()) return cb({});
+    desktopCapturer.getSources({ types: ["screen"] }).then((s) => cb({ video: s[0], audio: "loopback" })).catch(() => cb({}));
+  });
   memory = new ScreenMemory({
     dir: path.join(workDir(), "memory"),
     isEnabled: () => loadConfig().memoryEnabled,
@@ -1313,6 +1373,7 @@ app.whenReady().then(() => {
   setupWidgetSession();
   createPanel("tasks");
   createPanel("notes");
+  createPanel("listen");
   for (const m of widgets.list()) if (!PANELS[m.id]) createPanel(m.id); // Claude's Tasks/Notes were created just above
 
   const failed = registerHotkeys(loadConfig().hotkeys);
@@ -1324,7 +1385,7 @@ app.whenReady().then(() => {
   buildTray();
 });
 
-app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat?.kill(); });
+app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat?.kill(); listener?.stop(); });
 // Also clean up when Cloak exits without a normal quit (app.exit, a crash handler, etc.); the screen-memory
 // helper would otherwise keep the process from closing.
 process.on("exit", () => { try { memory?.stop(); chat?.kill(); } catch {} });

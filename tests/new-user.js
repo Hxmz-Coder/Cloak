@@ -16,6 +16,10 @@ const profile = path.join(os.tmpdir(), `cloak-test-${scenario}-${Date.now()}`);
 process.env.CLOAK_DATA_DIR = profile;
 const outDir = process.env.CLOAK_TEST_OUT || path.join(__dirname, "results");
 fs.mkdirSync(outDir, { recursive: true });
+// Listen's speech engine: a stand-in, unless a real one is given (see the "listen" scenario).
+const LECTURE = "Welcome back everyone. Remember that the biology exam is on Friday at three p m. Can anyone tell me what the mitochondria does?";
+if (process.env.CLOAK_TEST_VOICE_DIR) process.env.CLOAK_VOICE_DIR = process.env.CLOAK_TEST_VOICE_DIR;
+else { process.env.CLOAK_VOICE_FAKE = "1"; process.env.CLOAK_VOICE_FAKE_TEXT = LECTURE; }
 // Quiet test profile: no notification sounds.
 fs.mkdirSync(profile, { recursive: true });
 fs.writeFileSync(path.join(profile, "config.json"), JSON.stringify({ notify: { sound: false } }));
@@ -259,7 +263,7 @@ const SCENARIOS = {
     ipcMain.emit("open-settings", {}, "notify"); await wait(1500);
     const sw = await win("Claude Settings");
     const rows = await js(sw, `return document.querySelectorAll("#s-notify [data-n]").length`);
-    check("Settings > Notifications lists its switches", rows === 8, rows);
+    check("Settings > Notifications lists its switches", rows === 9, rows);
   },
 
   // A student in Homework mode: answers checked against known results.
@@ -469,6 +473,68 @@ const SCENARIOS = {
     check("Settings has the AI picker and Restart", ui.pick === 2 && ui.restart, JSON.stringify(ui));
   },
 
+  // Listen (computer sound -> text -> AI responses) and Memory. Uses a stand-in speech engine unless
+  // CLOAK_TEST_VOICE_DIR points at a real install (a folder with node_modules/@huggingface/transformers and models/).
+  async "listen"() {
+    const real = !!process.env.CLOAK_TEST_VOICE_DIR;
+    await call("welcome-done", { profile: {}, mode: "general" });
+    check("Listen is ready to use", (await call("listen-status")).installed);
+    ipcMain.emit("toggle-panel", {}, "listen"); await wait(1500);
+    const lp = await win("Claude Listen");
+    check("Listen panel opens", lp && lp.isVisible() && (await js(lp, `return document.body.classList.contains("ready")`)));
+
+    // Memory: added by you, and saved from a chat.
+    await call("memories-add", "My name is Sam and I take AP Biology.");
+    check("Settings can add a memory", (await call("memories-list")).some((m) => /Sam/.test(m.text)));
+
+    const st = await call("listen-start");
+    check("Listen starts", st.ok && (await call("listen-status")).listening, JSON.stringify(st));
+    let pcm = new Float32Array(16000 * 10);
+    if (real) {
+      // Speak the lecture with Windows' own voice into a 16 kHz wav, then transcribe it for real.
+      const wav = path.join(profile, "lecture.wav");
+      require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-Command",
+        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${wav}', $f); $s.Speak('${LECTURE}'); $s.Dispose()`], { windowsHide: true });
+      const buf = fs.readFileSync(wav);
+      const ints = new Int16Array(buf.buffer, buf.byteOffset + 44, (buf.length - 44) >> 1);
+      pcm = Float32Array.from(ints, (v) => v / 32768);
+    }
+    const t0 = Date.now();
+    const tr = await call("voice-transcribe", pcm);
+    check(`${real ? "real speech" : "speech"} turns into text (${((Date.now() - t0) / 1000).toFixed(1)}s)`, /biology exam/i.test(tr.text) && /mitochondria/i.test(tr.text), tr.text || tr.error);
+    transcript.push({ label: "transcribed", a: tr.text });
+    await wait(400);
+    check("the transcript shows in the panel", /mitochondria/i.test(await js(lp, `return document.getElementById("text").innerText`)));
+
+    const said = await call("listen-respond-now");
+    check("the AI responds to what it heard (answers the question)", said && /energy|ATP|powerhouse|respiration/i.test(said.text), JSON.stringify(said));
+    transcript.push({ label: "listen response", a: JSON.stringify(said) });
+    await wait(1500);
+    check("it adds the exam it heard to Tasks", (await call("tasks-list")).some((t) => /exam|biology/i.test(t.title)), JSON.stringify((await call("tasks-list")).map((t) => t.title)));
+    const asked = await call("listen-ask", "When is the exam?");
+    check("you can ask about what was said", asked && /friday/i.test(asked.text), JSON.stringify(asked));
+
+    let r = await ask("What question did the teacher just ask the class?");
+    check("the chat knows what Listen heard", r.ok && /mitochondria/i.test(r.text), r.text || r.error);
+    r = await ask("What's my name? Just the name.");
+    check("the chat uses what it was told to remember", r.ok && /Sam/.test(r.text), r.text || r.error);
+    r = await ask("Please remember that my locker number is 214.");
+    check("telling the chat to remember saves it", r.ok && (r.remembered || []).some((x) => /214/.test(x)) && (await call("memories-list")).some((m) => /214/.test(m.text)), JSON.stringify(r));
+    await call("reset");
+    r = await ask("What's my locker number?");
+    check("memories last beyond the conversation", r.ok && /214/.test(r.text), r.text || r.error);
+
+    const cap = await js(lp, `await startCapture(); const n = capture.stream.getAudioTracks().length; stopCapture(); return n`);
+    check("captures the computer's sound (loopback)", cap === 1, cap);
+    await call("listen-stop");
+    check("Listen stops", !(await call("listen-status")).listening);
+
+    ipcMain.emit("open-settings", {}, "memory"); await wait(1500);
+    const sw = await win("Claude Settings");
+    const mem = await js(sw, `return document.querySelectorAll("#memList .item").length`);
+    check("Settings > Memory lists what it remembers", mem >= 2, mem);
+  },
+
   // Sign-in errors and odd input.
   async "edge-cases"() {
     await call("welcome-done", { profile: {}, mode: "general" });
@@ -497,7 +563,7 @@ const SCENARIOS = {
     check("new chat forgets the old conversation", r.ok && /\bno\b/i.test(r.text), r.text);
   },
 };
-function SCENARIO_NAMES() { return ["first-run", "notifications", "chatgpt", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
+function SCENARIO_NAMES() { return ["first-run", "notifications", "chatgpt", "listen", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
 
 // ---------- run ----------
 app.whenReady().then(async () => {

@@ -8,7 +8,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..", "..");
 const PORT = Number(process.env.PORT || 4173);
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".png": "image/png", ".svg": "image/svg+xml" };
-const MOCKED = new Set(["index.html", "tasks.html", "notes.html", "settings.html"]);
+const MOCKED = new Set(["index.html", "tasks.html", "notes.html", "settings.html", "listen.html"]);
 
 http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");

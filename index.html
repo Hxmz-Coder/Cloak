@@ -48,6 +48,7 @@
   /* widget buttons */
   #wbtns { display: flex; align-items: center; gap: 1px; }
   .wb { position: relative; }
+  .wb.rec { color: #ff8a7a; } /* Listen is capturing (the bar only; the pill never changes) */
   .wb.on::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); }
   .wb .letter { width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700;
     border: 1.5px solid currentColor; line-height: 1; }

@@ -157,6 +157,7 @@ function clearAway() {
 const ICONS = {
   tasks: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>',
   notes: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/></svg>',
+  listen: '<svg viewBox="0 0 24 24"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg>',
   all: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>',
 };
@@ -167,7 +168,7 @@ function renderWidgetButtons(panels) {
   const direct = panels.length > MAX_DIRECT + 1 ? panels.slice(0, MAX_DIRECT) : panels;
   for (const p of direct) {
     const b = document.createElement("button");
-    b.className = `icon-btn wb${p.visible ? " on" : ""}`;
+    b.className = `icon-btn wb${p.visible ? " on" : ""}${p.active ? " rec" : ""}`;
     b.title = p.label;
     b.innerHTML = ICONS[p.name] || `<span class="letter">${esc(p.label.trim().charAt(0).toUpperCase())}</span>`;
     b.onclick = () => window.overlay.togglePanel(p.name);
@@ -259,6 +260,13 @@ function showReply(el, res) {
     t.className = "added";
     t.textContent = `Added ${res.tasksAdded.length} task${res.tasksAdded.length > 1 ? "s" : ""} to your list`;
     meta.appendChild(t);
+  }
+  if (res.remembered?.length) {
+    const r = document.createElement("span");
+    r.className = "added";
+    r.textContent = `Remembered: ${res.remembered.join(" · ")}`;
+    r.title = "See or change what it remembers in Settings > Memory";
+    meta.appendChild(r);
   }
   el.appendChild(meta);
   if (res.approvals?.length) showApprovals(res.approvals);

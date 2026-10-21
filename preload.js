@@ -64,6 +64,28 @@ contextBridge.exposeInMainWorld("overlay", {
   onScanState: on("scan-state"),
   onFocusTask: on("focus-task"),
 
+  // Listen
+  listenStatus: () => ipcRenderer.invoke("listen-status"),
+  listenInstall: () => ipcRenderer.invoke("listen-install"),
+  listenStart: () => ipcRenderer.invoke("listen-start"),
+  listenStop: () => ipcRenderer.invoke("listen-stop"),
+  listenClear: () => ipcRenderer.invoke("listen-clear"),
+  listenSetAuto: (on) => ipcRenderer.invoke("listen-set-auto", on),
+  listenRespondNow: () => ipcRenderer.invoke("listen-respond-now"),
+  listenAsk: (q) => ipcRenderer.invoke("listen-ask", q),
+  transcribe: (pcm) => ipcRenderer.invoke("voice-transcribe", pcm),
+  onListenState: on("listen-state"),
+  onListenTranscript: on("listen-transcript"),
+  onListenFeed: on("listen-feed"),
+
+  // memory (Settings > Memory)
+  listMemories: () => ipcRenderer.invoke("memories-list"),
+  addMemory: (text) => ipcRenderer.invoke("memories-add", text),
+  updateMemory: (id, text) => ipcRenderer.invoke("memories-update", id, text),
+  removeMemory: (id) => ipcRenderer.invoke("memories-remove", id),
+  clearMemories: () => ipcRenderer.invoke("memories-clear"),
+  onMemoriesChanged: on("memories-changed"),
+
   // notes
   getNotes: () => ipcRenderer.invoke("notes-get"),
   setNotes: (text) => ipcRenderer.invoke("notes-set", text),
