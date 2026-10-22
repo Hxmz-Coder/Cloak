@@ -1237,11 +1237,15 @@ ipcMain.handle("scan-tasks", (_e, sources) => scanTasks(sources));
 // ---------- Listen (lib/listen.js) ----------
 // Listen is a mode: while it's the active mode, Cloak listens the whole time (the Listen panel captures the sound,
 // even while hidden). Switching to any other mode stops it.
+// Listening happens while the Listen widget was started (Start in the panel) and/or while Listen mode is on.
+// Only Listen mode pops the answers up as notifications; the widget keeps them in its Responses list.
 function syncListenToMode() {
   if (!listener || !panels.listen) return;
-  if (activeMode().id === "listen") {
-    if (!listener.installed()) { showPanel("listen", true); return; } // shows "Set up Listen"
+  listener.mode = activeMode().id === "listen";
+  if (listener.mode || listener.manual) {
+    if (!listener.installed()) { listener.manual = false; showPanel("listen", true); return; } // shows "Set up Listen"
     if (!listener.listening) listener.start();
+    else listener.setState(listener.state.status, listener.state.detail); // tells the panel the mode changed
     const wc = panels.listen.webContents;
     if (wc.isLoading()) wc.once("did-finish-load", () => wc.send("listen-capture", true));
     else wc.send("listen-capture", true);
@@ -1266,7 +1270,8 @@ function makeListener() {
         body: added.map((t) => t.title).slice(0, 2).join(", "), target: { type: "tasks", taskId: added[0].id } });
       return added;
     },
-    onImportant: (item) => pushNotification({ kind: "listen", urgent: true, title: item.q ? `Q: ${item.q}` : "Listen", body: item.text, target: { type: "panel", name: "listen" } }),
+    // Listen mode: answers (and important notes) pop up right away, to read out.
+    onImportant: (item) => { if (listener.mode) pushNotification({ kind: "listen", urgent: true, title: item.q ? `Q: ${item.q}` : "Listen", body: item.text, target: { type: "panel", name: "listen" } }); },
   });
 }
 ipcMain.handle("listen-status", () => listener.status());
@@ -1276,14 +1281,17 @@ ipcMain.handle("listen-install", async () => {
   return r;
 });
 // The panel's Start / Stop buttons switch the mode.
+// The widget's Start / Stop. (While Listen mode is on, Stop also turns the mode off.)
 ipcMain.handle("listen-start", () => {
   if (!listener.installed()) return { error: "Set up Listen first." };
-  setActiveMode("listen");
+  listener.manual = true;
+  syncListenToMode();
   return { ok: true };
 });
 ipcMain.handle("listen-stop", () => {
+  listener.manual = false;
   if (activeMode().id === "listen") setActiveMode(loadConfig().modeBeforeListen || "general");
-  else listener.stop();
+  else syncListenToMode();
   return true;
 });
 ipcMain.handle("listen-clear", () => { listener.clear(); return true; });

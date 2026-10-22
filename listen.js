@@ -19,7 +19,8 @@ function render() {
   s.classList.toggle("err", st.status === "error");
   s.textContent = st.status === "error" ? st.detail
     : st.status === "loading" ? st.detail || "Starting the speech engine…"
-    : st.listening ? "Listen mode is on: answering questions as they're asked…"
+    : st.listening && st.mode ? "Listen mode: answers pop up as questions are asked."
+    : st.listening ? "Listening to your computer's sound…"
     : st.detail || "Listens to your computer's sound, not your microphone.";
   $("sub").textContent = st.listening ? "on" : "";
   if (st.status === "installing" || (!st.installed && st.status === "error")) $("setupStatus").textContent = st.detail;

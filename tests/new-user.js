@@ -508,18 +508,20 @@ const SCENARIOS = {
     check("Listen is ready to use", (await call("listen-status")).installed);
     ipcMain.emit("toggle-panel", {}, "listen"); await wait(1500);
     const lp = await win("Claude Listen");
+    const w = await win("Claude Widget");
+    const island = () => js(w, `return { on: document.body.classList.contains("notifying"), title: document.getElementById("nTitle").textContent, body: document.getElementById("nBody").textContent }`);
+    const clearIsland = async () => { for (let i = 0; i < 6 && (await island()).on; i++) { await js(w, `document.getElementById("nClose").click(); return 1`); await wait(300); } };
     check("Listen panel opens", lp && lp.isVisible() && (await js(lp, `return document.body.classList.contains("ready")`)));
 
     // Memory: added by you, and saved from a chat.
     await call("memories-add", "My name is Sam and I take AP Biology.");
     check("Settings can add a memory", (await call("memories-list")).some((m) => /Sam/.test(m.text)));
 
-    // Listen is a mode: turning it on starts listening (and capturing the computer's sound) right away.
-    await call("set-active-mode", "listen");
+    // The Listen widget on its own: Start listens without changing the mode.
+    await call("listen-start");
     await wait(1500);
-    check("Listen mode starts listening", (await call("listen-status")).listening && (await js(lp, `return !!capture`)), JSON.stringify(await call("listen-status")));
-    const modes = await call("get-modes");
-    check("Listen is in the mode list", modes.active === "listen" && modes.modes.some((m) => m.id === "listen"));
+    check("the widget starts listening without switching modes", (await call("listen-status")).listening && (await js(lp, `return !!capture`)) && (await call("get-modes")).active === "general");
+    check("Listen is also in the mode list", (await call("get-modes")).modes.some((m) => m.id === "listen"));
 
     // Sound goes through the panel's own clip-cutter, quietly (computer audio is often quiet): the bug where the
     // level meter moved but nothing reached the transcript.
@@ -550,6 +552,25 @@ const SCENARIOS = {
     check(`it answers the question it heard (${((Date.now() - t0) / 1000).toFixed(0)}s after the audio)`, ans && /energy|ATP|powerhouse|respiration/i.test(ans.text) && /mitochondria/i.test(ans.q), JSON.stringify(ans));
     transcript.push({ label: "auto answer", a: JSON.stringify(ans) });
     check("the answer shows in the panel", /Heard:.*mitochondria/i.test(await js(lp, `return document.getElementById("feed").innerText`)));
+    check("answers are a short script to read out, not an explanation", ans && ans.text.length < 180 && !/^(the answer is|answer:)/i.test(ans.text) && !/[*#]/.test(ans.text), ans?.text);
+    check("the widget alone doesn't pop answers up", !(await island()).on);
+    listen().addTranscript("Quick warm-up before we start. What's one plus one?");
+    let sum = null;
+    for (let i = 0; i < 45 && !sum; i++) { await wait(1500); sum = (await call("listen-status")).feed.find((f) => f.kind === "answer" && /one plus one/i.test(f.q)); }
+    check("\"What's one plus one?\" -> just the answer", sum && /^(two|2)\.?$/i.test(sum.text.trim()), JSON.stringify(sum));
+
+    // Listen mode: the same, plus every answer pops up right away to read out.
+    await call("listen-stop");
+    await wait(500);
+    check("Stop in the widget stops listening", !(await call("listen-status")).listening);
+    await call("set-active-mode", "listen");
+    await wait(1500);
+    check("Listen mode listens", (await call("listen-status")).listening && (await call("listen-status")).mode && (await js(lp, `return !!capture`)));
+    listen().addTranscript("Okay, next one. Does anyone know the capital of France?");
+    let pop = null;
+    for (let i = 0; i < 45; i++) { await wait(1000); const n = await island(); if (n.on && /France/.test(n.title)) { pop = n; break; } }
+    check("in Listen mode the answer pops up to read out", pop && /^Q:/.test(pop.title) && /Paris/.test(pop.body) && pop.body.length < 120, JSON.stringify(pop));
+    await clearIsland();
 
     // Answers use what it was told to remember.
     await call("memories-add", "My biology teacher is Ms. Rivera.");
