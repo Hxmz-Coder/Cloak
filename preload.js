@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld("overlay", {
   onListenState: on("listen-state"),
   onListenTranscript: on("listen-transcript"),
   onListenFeed: on("listen-feed"),
+  onListenCapture: on("listen-capture"),
 
   // memory (Settings > Memory)
   listMemories: () => ipcRenderer.invoke("memories-list"),

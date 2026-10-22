@@ -174,9 +174,12 @@ function applyMode() {
   writeInstructions();
   broadcast("mode-changed", { id: mode.id, name: mode.name, shortcuts: mode.shortcuts });
   chat?.warm();
+  syncListenToMode();
 }
 function setActiveMode(id) {
   if (!getModes().some((m) => m.id === id)) return false;
+  const cur = loadConfig().activeMode || "general";
+  if (id === "listen" && cur !== "listen") saveConfig({ modeBeforeListen: cur }); // Stop in the Listen panel goes back to it
   saveConfig({ activeMode: id });
   applyMode();
   buildTray();
@@ -1232,12 +1235,28 @@ ipcMain.handle("decline", (_e, { ids }) => {
 ipcMain.handle("scan-tasks", (_e, sources) => scanTasks(sources));
 
 // ---------- Listen (lib/listen.js) ----------
+// Listen is a mode: while it's the active mode, Cloak listens the whole time (the Listen panel captures the sound,
+// even while hidden). Switching to any other mode stops it.
+function syncListenToMode() {
+  if (!listener || !panels.listen) return;
+  if (activeMode().id === "listen") {
+    if (!listener.installed()) { showPanel("listen", true); return; } // shows "Set up Listen"
+    if (!listener.listening) listener.start();
+    const wc = panels.listen.webContents;
+    if (wc.isLoading()) wc.once("did-finish-load", () => wc.send("listen-capture", true));
+    else wc.send("listen-capture", true);
+  } else if (listener.listening) listener.stop();
+}
 // What's been playing on the computer lately, for the chat's context while Listen is on.
 const listenContext = (minutes) => (listener?.listening ? listener.recent(minutes, 3000) : "");
 function makeListener() {
   return new Listener(path.join(userData(), "voice"), {
     emit: (ch, data) => { panels.listen?.webContents.send(ch, data); if (ch === "listen-state") notifyPanels(); },
-    runAI: (opts) => runAI({ cwd: workDir(), tools: "", persist: false, ...(provider() === "claude" ? { model: (CHAT_SPEEDS[loadConfig().chatSpeed] || CHAT_SPEEDS.balanced).model } : {}), ...opts }),
+    // readFiles: Claude may open the user's saved memory files for an answer.
+    runAI: ({ readFiles, ...opts }) => runAI({ cwd: workDir(), tools: "", persist: false,
+      ...(provider() === "claude" ? { model: (CHAT_SPEEDS[loadConfig().chatSpeed] || CHAT_SPEEDS.balanced).model } : {}),
+      ...(readFiles && provider() === "claude" && memories.files.some((f) => f.status === "ready") ? { tools: "Read", allowedTools: ["Read"], addDirs: [memories.filesDir] } : {}),
+      ...opts }),
     aiError: (t) => aiError(t),
     memories: () => memories.context(),
     today: () => todayLine(),
@@ -1245,14 +1264,28 @@ function makeListener() {
       const added = tasks.add(items, "claude");
       if (added.length) pushNotification({ kind: "found", title: `Added ${added.length} task${added.length > 1 ? "s" : ""} from Listen`,
         body: added.map((t) => t.title).slice(0, 2).join(", "), target: { type: "tasks", taskId: added[0].id } });
+      return added;
     },
-    onImportant: (item) => pushNotification({ kind: "listen", urgent: true, title: "Listen", body: item.text, target: { type: "panel", name: "listen" } }),
+    onImportant: (item) => pushNotification({ kind: "listen", urgent: true, title: item.q ? `Q: ${item.q}` : "Listen", body: item.text, target: { type: "panel", name: "listen" } }),
   });
 }
 ipcMain.handle("listen-status", () => listener.status());
-ipcMain.handle("listen-install", () => listener.install());
-ipcMain.handle("listen-start", () => listener.start());
-ipcMain.handle("listen-stop", () => { listener.stop(); return true; });
+ipcMain.handle("listen-install", async () => {
+  const r = await listener.install();
+  if (r.ok) syncListenToMode(); // set up from the Listen mode: start listening now
+  return r;
+});
+// The panel's Start / Stop buttons switch the mode.
+ipcMain.handle("listen-start", () => {
+  if (!listener.installed()) return { error: "Set up Listen first." };
+  setActiveMode("listen");
+  return { ok: true };
+});
+ipcMain.handle("listen-stop", () => {
+  if (activeMode().id === "listen") setActiveMode(loadConfig().modeBeforeListen || "general");
+  else listener.stop();
+  return true;
+});
 ipcMain.handle("listen-clear", () => { listener.clear(); return true; });
 ipcMain.handle("listen-set-auto", (_e, on) => { listener.auto = !!on; saveConfig({ listenAuto: !!on }); return listener.status(); });
 ipcMain.handle("listen-respond-now", () => listener.respond());
@@ -1449,6 +1482,7 @@ app.whenReady().then(() => {
   createPanel("tasks");
   createPanel("notes");
   createPanel("listen");
+  syncListenToMode(); // Listen mode was on when Cloak closed: keep listening
   for (const m of widgets.list()) if (!PANELS[m.id]) createPanel(m.id); // Claude's Tasks/Notes were created just above
 
   const failed = registerHotkeys(loadConfig().hotkeys);
@@ -1464,5 +1498,5 @@ app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat
 // Also clean up when Cloak exits without a normal quit (app.exit, a crash handler, etc.); the screen-memory
 // helper would otherwise keep the process from closing.
 process.on("exit", () => { try { memory?.stop(); chat?.kill(); } catch {} });
-module.exports = { toggleAll, checkTaskNotifications }; // for test scripts
+module.exports = { toggleAll, checkTaskNotifications, listen: () => listener }; // for test scripts
 app.on("window-all-closed", (e) => e.preventDefault());

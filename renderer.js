@@ -343,11 +343,12 @@ const N_ICONS = {
   approval: '<svg viewBox="0 0 24 24"><path d="M12 3l8 4v5c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V7z"/><path d="M12 9v4M12 16.5v.5"/></svg>',
   found: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>',
   widget: '<svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21a2 2 0 0 0 4 0"/></svg>',
+  listen: '<svg viewBox="0 0 24 24"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2"/></svg>',
   built: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><path d="M17 13v8M13 17h8"/></svg>',
 };
 const nQueue = [];
 let nCur = null, nTimer = null, nLeft = 0, nStarted = 0;
-const nDuration = (n) => (n.sticky ? 25_000 : n.urgent ? 10_000 : 7_000);
+const nDuration = (n) => (n.kind === "listen" ? 20_000 : n.sticky ? 25_000 : n.urgent ? 10_000 : 7_000);
 
 window.overlay.onNotify((n) => {
   // A newer one about the same thing (e.g. another answer) replaces the waiting one.

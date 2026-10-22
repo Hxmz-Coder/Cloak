@@ -50,7 +50,7 @@ app.on("web-contents-created", (_e, wc) => {
   wc.on("render-process-gone", (_ev, d) => errors.push(`${wc.getTitle()}: renderer crashed (${d.reason})`));
 });
 
-const { toggleAll, checkTaskNotifications } = require("../main.js");
+const { toggleAll, checkTaskNotifications, listen } = require("../main.js");
 const { taskNotifications, NotifyState, DEFAULT_NOTIFY } = require("../lib/notify");
 
 // ---------- helpers ----------
@@ -514,27 +514,55 @@ const SCENARIOS = {
     await call("memories-add", "My name is Sam and I take AP Biology.");
     check("Settings can add a memory", (await call("memories-list")).some((m) => /Sam/.test(m.text)));
 
-    const st = await call("listen-start");
-    check("Listen starts", st.ok && (await call("listen-status")).listening, JSON.stringify(st));
-    let pcm = new Float32Array(16000 * 10);
+    // Listen is a mode: turning it on starts listening (and capturing the computer's sound) right away.
+    await call("set-active-mode", "listen");
+    await wait(1500);
+    check("Listen mode starts listening", (await call("listen-status")).listening && (await js(lp, `return !!capture`)), JSON.stringify(await call("listen-status")));
+    const modes = await call("get-modes");
+    check("Listen is in the mode list", modes.active === "listen" && modes.modes.some((m) => m.id === "listen"));
+
+    // Sound goes through the panel's own clip-cutter, quietly (computer audio is often quiet): the bug where the
+    // level meter moved but nothing reached the transcript.
+    let pcm;
     if (real) {
-      // Speak the lecture with Windows' own voice into a 16 kHz wav, then transcribe it for real.
       const wav = path.join(profile, "lecture.wav");
       require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-Command",
         `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${wav}', $f); $s.Speak('${LECTURE}'); $s.Dispose()`], { windowsHide: true });
       const buf = fs.readFileSync(wav);
       const ints = new Int16Array(buf.buffer, buf.byteOffset + 44, (buf.length - 44) >> 1);
-      pcm = Float32Array.from(ints, (v) => v / 32768);
+      pcm = Float32Array.from(ints, (v) => (v / 32768) * 0.04); // about as loud as a quiet video
+    } else {
+      pcm = new Float32Array(16000 * 4); // the stand-in engine only needs something that sounds like speech
+      for (let i = 0; i < pcm.length; i++) pcm[i] = 0.01 * Math.sin(i / 7) * (Math.floor(i / 4000) % 2 ? 1 : 0.6);
     }
     const t0 = Date.now();
-    const tr = await call("voice-transcribe", pcm);
-    check(`${real ? "real speech" : "speech"} turns into text (${((Date.now() - t0) / 1000).toFixed(1)}s)`, /biology exam/i.test(tr.text) && /mitochondria/i.test(tr.text), tr.text || tr.error);
-    transcript.push({ label: "transcribed", a: tr.text });
-    await wait(400);
-    check("the transcript shows in the panel", /mitochondria/i.test(await js(lp, `return document.getElementById("text").innerText`)));
+    await js(lp, `const pcm = new Float32Array(Uint8Array.from(atob("${Buffer.from(pcm.buffer).toString("base64")}"), (c) => c.charCodeAt(0)).buffer);
+      for (let i = 0; i < pcm.length; i += 1365) feed(pcm.slice(i, i + 1365));
+      for (let i = 0; i < 20; i++) feed(new Float32Array(1365)); return 1`);
+    let heard = "";
+    for (let i = 0; i < 40 && !/mitochondria/i.test(heard); i++) { await wait(1000); heard = await js(lp, `return document.getElementById("text").innerText`); }
+    check(`quiet ${real ? "real speech" : "sound"} reaches the transcript (${((Date.now() - t0) / 1000).toFixed(1)}s)`, /biology exam/i.test(heard) && /mitochondria/i.test(heard), heard);
+    transcript.push({ label: "transcribed", a: heard });
+
+    // A question it hears is answered right away, without asking.
+    let ans = null;
+    for (let i = 0; i < 45 && !ans; i++) { await wait(2000); ans = (await call("listen-status")).feed.find((f) => f.kind === "answer"); }
+    check(`it answers the question it heard (${((Date.now() - t0) / 1000).toFixed(0)}s after the audio)`, ans && /energy|ATP|powerhouse|respiration/i.test(ans.text) && /mitochondria/i.test(ans.q), JSON.stringify(ans));
+    transcript.push({ label: "auto answer", a: JSON.stringify(ans) });
+    check("the answer shows in the panel", /Heard:.*mitochondria/i.test(await js(lp, `return document.getElementById("feed").innerText`)));
+
+    // Answers use what it was told to remember.
+    await call("memories-add", "My biology teacher is Ms. Rivera.");
+    listen().addTranscript("Okay, quick check before we start. What is the name of your biology teacher?");
+    let ans2 = null;
+    for (let i = 0; i < 45 && !ans2; i++) { await wait(2000); ans2 = (await call("listen-status")).feed.find((f) => f.kind === "answer" && /teacher/i.test(f.q)); }
+    check("answers come from memory too", ans2 && /Rivera/.test(ans2.text), JSON.stringify(ans2));
+    listen().addTranscript("How are you doing today?");
+    await wait(15000);
+    check("small talk isn't answered", !(await call("listen-status")).feed.some((f) => f.kind === "answer" && /how are you/i.test(f.q)));
 
     const said = await call("listen-respond-now");
-    check("the AI responds to what it heard (answers the question)", said && /energy|ATP|powerhouse|respiration/i.test(said.text), JSON.stringify(said));
+    check("it also points out the deadline it heard", said && /friday|exam/i.test(said.text), JSON.stringify(said) + " feed: " + JSON.stringify((await call("listen-status")).feed.slice(-3)));
     transcript.push({ label: "listen response", a: JSON.stringify(said) });
     await wait(1500);
     check("it adds the exam it heard to Tasks", (await call("tasks-list")).some((t) => /exam|biology/i.test(t.title)), JSON.stringify((await call("tasks-list")).map((t) => t.title)));
@@ -567,7 +595,8 @@ const SCENARIOS = {
     const cap = await js(lp, `await startCapture(); const n = capture.stream.getAudioTracks().length; stopCapture(); return n`);
     check("captures the computer's sound (loopback)", cap === 1, cap);
     await call("listen-stop");
-    check("Listen stops", !(await call("listen-status")).listening);
+    await wait(800);
+    check("Stop turns Listen mode off and stops capturing", !(await call("listen-status")).listening && (await call("get-modes")).active === "general" && !(await js(lp, `return !!capture`)));
 
     ipcMain.emit("open-settings", {}, "memory"); await wait(1500);
     const sw = await win("Claude Settings");

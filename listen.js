@@ -19,7 +19,7 @@ function render() {
   s.classList.toggle("err", st.status === "error");
   s.textContent = st.status === "error" ? st.detail
     : st.status === "loading" ? st.detail || "Starting the speech engine…"
-    : st.listening ? "Listening to your computer's sound…"
+    : st.listening ? "Listen mode is on: answering questions as they're asked…"
     : st.detail || "Listens to your computer's sound, not your microphone.";
   $("sub").textContent = st.listening ? "on" : "";
   if (st.status === "installing" || (!st.installed && st.status === "error")) $("setupStatus").textContent = st.detail;
@@ -35,7 +35,8 @@ function addCard(item) {
   f.querySelector(".thinking")?.remove();
   const el = document.createElement("div");
   el.className = `card${item.important ? " important" : ""}${item.kind === "error" ? " error" : ""}`;
-  el.innerHTML = (item.q ? `<div class="q">You asked: ${esc(item.q)}</div>` : "") + esc(item.text) + `<span class="when">${clock(item.t)}</span>`;
+  const q = item.q ? `<div class="q">${item.kind === "ask" ? "You asked" : "Heard"}: ${esc(item.q)}</div>` : "";
+  el.innerHTML = q + esc(item.text) + `<span class="when">${clock(item.t)}</span>`;
   f.appendChild(el);
   f.scrollTop = f.scrollHeight;
 }
@@ -60,11 +61,22 @@ ov.onListenState((s) => {
   if (!s.listening && was) stopCapture();
 });
 ov.onListenTranscript((s) => { st.transcript.push(s); addLine(s); });
+// Listen mode turned on (from the mode menu, at startup, or Start here): capture the computer's sound.
+ov.onListenCapture(async () => {
+  if (capture) return;
+  try { await startCapture(); }
+  catch (e) {
+    await ov.listenStop();
+    $("status").textContent = `Couldn't capture the computer's sound: ${e.message}`;
+    $("status").classList.add("err");
+  }
+});
 ov.onListenFeed((item) => { st.feed.push(item); addCard(item); });
 
 // ---------- capturing the computer's sound ----------
 const RATE = 16000;
 async function startCapture() {
+  if (capture) return;
   // The system-audio grant comes from main (loopback); the screen video it insists on is dropped right away.
   const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
   stream.getVideoTracks().forEach((t) => t.stop());
@@ -77,32 +89,49 @@ async function startCapture() {
   src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
 
   const step = ctx.sampleRate / RATE;
-  let chunks = [], len = 0, voiced = 0, quiet = 0;
   proc.onaudioprocess = (e) => {
     const input = e.inputBuffer.getChannelData(0);
     // down to 16 kHz by averaging
     const out = new Float32Array(Math.floor(input.length / step));
-    let sum = 0;
     for (let i = 0; i < out.length; i++) {
       let acc = 0, n = 0;
       for (let j = Math.floor(i * step); j < Math.floor((i + 1) * step); j++) { acc += input[j]; n++; }
       out[i] = acc / (n || 1);
-      sum += out[i] * out[i];
     }
-    const rms = Math.sqrt(sum / (out.length || 1));
-    meter(rms);
-    chunks.push(out); len += out.length;
-    if (rms > 0.008) { voiced += out.length; quiet = 0; } else quiet += out.length;
-    // A clip ends at a pause after some speech, or at 15 seconds. Long stretches of silence are dropped.
-    const pauseAfterSpeech = voiced > 1.5 * RATE && quiet > 0.7 * RATE;
-    if (pauseAfterSpeech || len > 15 * RATE) {
-      if (voiced > 0.6 * RATE) send(join(chunks, len));
-      chunks = []; len = 0; voiced = 0; quiet = 0;
-    } else if (len > 8 * RATE && voiced < 0.2 * RATE) { chunks = []; len = 0; voiced = 0; quiet = 0; }
+    feed(out);
   };
   capture = { stream, ctx, stop() { proc.onaudioprocess = null; stream.getTracks().forEach((t) => t.stop()); ctx.close().catch(() => {}); } };
 }
 function stopCapture() { capture?.stop(); capture = null; meter(0); }
+
+// 16 kHz sound in, clips out. "Speech" is anything clearly above the background level, so it works whatever the
+// volume. A clip ends at a short pause after some speech (so a question is answered as soon as it's finished), or
+// after 8 seconds; stretches with no speech are dropped.
+let chunks = [], len = 0, voiced = 0, quiet = 0, floor = 0.002;
+function feed(out) {
+  let sum = 0;
+  for (let i = 0; i < out.length; i++) sum += out[i] * out[i];
+  const rms = Math.sqrt(sum / (out.length || 1));
+  meter(rms);
+  floor = rms < floor ? floor * 0.9 + rms * 0.1 : floor * 0.995 + rms * 0.005; // follows the quiet parts
+  const speaking = rms > Math.max(0.0015, floor * 2.5);
+  chunks.push(out); len += out.length;
+  if (speaking) { voiced += out.length; quiet = 0; } else quiet += out.length;
+  const pauseAfterSpeech = voiced > 1 * RATE && quiet > 0.5 * RATE;
+  if (pauseAfterSpeech || len > 8 * RATE) {
+    if (voiced > 0.4 * RATE) send(normalize(join(chunks, len)));
+    chunks = []; len = 0; voiced = 0; quiet = 0;
+  } else if (len > 6 * RATE && voiced < 0.2 * RATE) { chunks = []; len = 0; voiced = 0; quiet = 0; }
+}
+// Quiet audio is boosted so the speech engine hears it clearly.
+function normalize(a) {
+  let peak = 0;
+  for (let i = 0; i < a.length; i++) peak = Math.max(peak, Math.abs(a[i]));
+  if (peak < 0.001 || peak > 0.5) return a;
+  const g = Math.min(30, 0.8 / peak);
+  for (let i = 0; i < a.length; i++) a[i] *= g;
+  return a;
+}
 const join = (chunks, len) => { const a = new Float32Array(len); let o = 0; for (const c of chunks) { a.set(c, o); o += c.length; } return a; };
 
 // Clips are transcribed in order, one at a time; if the engine falls behind, the oldest waiting clips are dropped.
@@ -116,9 +145,11 @@ function send(pcm) {
 async function pump() {
   if (busy || !queue.length) return;
   busy = true;
-  const r = await ov.transcribe(queue.shift());
-  busy = false;
-  if (r?.error) { $("status").textContent = r.error; $("status").classList.add("err"); }
+  let r;
+  try { r = await ov.transcribe(queue.shift()); }
+  catch (e) { r = { error: String(e.message || e) }; }
+  finally { busy = false; }
+  if (r?.error) { $("status").textContent = `Couldn't turn that into text: ${r.error}`; $("status").classList.add("err"); }
   pump();
 }
 
@@ -136,16 +167,11 @@ $("setupBtn").onclick = async () => {
   if (r?.error) $("setupStatus").textContent = r.error;
   st = await ov.listenStatus(); render();
 };
+// Start / Stop switch Listen mode on and off (main then tells this panel to capture, or stops it).
 $("toggle").onclick = async () => {
   if (st.listening) { stopCapture(); await ov.listenStop(); return; }
   const r = await ov.listenStart();
-  if (r?.error) { $("status").textContent = r.error; return; }
-  try { await startCapture(); }
-  catch (e) {
-    await ov.listenStop();
-    $("status").textContent = `Couldn't capture the computer's sound: ${e.message}`;
-    $("status").classList.add("err");
-  }
+  if (r?.error) $("status").textContent = r.error;
 };
 $("auto").onchange = async () => { st = await ov.listenSetAuto($("auto").checked); render(); };
 $("respondNow").onclick = async () => {
