@@ -15,12 +15,16 @@ const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widge
 const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
 const { DEFAULT_NOTIFY, NotifyState, taskNotifications } = require("./lib/notify");
 const codex = require("./lib/codex");
-const { openTerminal: openTerminalWindow } = require("./lib/terminal");
+const { openTerminal: openTerminalWindow, shQuote } = require("./lib/terminal");
+const { fixMacPath } = require("./lib/platform");
+
+const IS_MAC = process.platform === "darwin";
+fixMacPath(); // before anything looks for claude, codex or npm
 
 // Custom widgets load from overlay://app/... (shared frame files) and overlay://widget/<id>/index.html.
 protocol.registerSchemesAsPrivileged([{ scheme: "overlay", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
-// Data lives in %APPDATA%\cloak. Earlier versions used %APPDATA%\overclaude (and before that
+// Data lives in %APPDATA%\cloak (on a Mac, ~/Library/Application Support/cloak). Earlier versions used %APPDATA%\overclaude (and before that
 // %APPDATA%\claude-overlay); the newest one found is moved over once so everything carries across the rename.
 app.setName("cloak");
 // CLOAK_DATA_DIR points it at a different folder instead (e.g. a test or portable profile).
@@ -210,7 +214,7 @@ function makeWindow(file, size) {
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, autoplayPolicy: "no-user-gesture-required" }, // notification chime
   });
   win.setAlwaysOnTop(true, "screen-saver");
-  win.setVisibleOnAllWorkspaces(true);
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // macOS: also over full-screen apps
   win.loadFile(path.join(__dirname, file)); // absolute, so it works whatever folder Cloak was started from
   win.on("blur", () => { if (!capturing) win.webContents.send("blurred"); });
   return win;
@@ -224,7 +228,7 @@ function makeWidgetWindow(id, size) {
     webPreferences: { preload: path.join(__dirname, "widget-preload.js"), contextIsolation: true, sandbox: true, partition: "persist:widgets" },
   });
   win.setAlwaysOnTop(true, "screen-saver");
-  win.setVisibleOnAllWorkspaces(true);
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); // macOS: also over full-screen apps
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   widgetIdBySender.set(win.webContents.id, id);
@@ -850,12 +854,14 @@ function deleteReg(key, name) {
   try { reg("delete", key, "/v", name, "/f"); } catch {}
 }
 function getOpenAtLogin() {
+  if (IS_MAC) return fs.existsSync(LAUNCH_AGENT);
   if (readReg(RUN_KEY, RUN_NAME) === null) return false;
   // Turned off in Task Manager's Startup apps: the first byte is odd (03) when disabled.
   const approved = readReg(APPROVED_KEY, RUN_NAME);
   return !approved || !(parseInt(approved.slice(0, 2), 16) & 1);
 }
 function setOpenAtLogin(on) {
+  if (IS_MAC) return on ? writeLaunchAgent() : fs.rmSync(LAUNCH_AGENT, { force: true });
   deleteReg(APPROVED_KEY, RUN_NAME); // clears a Task Manager "disabled" so turning it on here really turns it on
   if (on) {
     try { writeRunValue(); } catch (e) { console.error("start at sign-in:", e.message); }
@@ -867,11 +873,39 @@ function writeRunValue() {
 // On launch: replace the old unquoted entry, and point an existing entry at this copy if the folder moved or was renamed.
 function syncLoginItem() {
   if (process.env.CLOAK_DATA_DIR || process.env.OVERCLAUDE_DATA_DIR) return; // test or portable profile: leave it alone
+  if (IS_MAC) { if (fs.existsSync(LAUNCH_AGENT) && fs.readFileSync(LAUNCH_AGENT, "utf8") !== launchAgentPlist()) writeLaunchAgent(); return; }
   const legacy = readReg(RUN_KEY, LEGACY_RUN_NAME);
   const hadLegacy = !!legacy && /cloak|overclaude|claude-overlay/i.test(legacy);
   if (hadLegacy) deleteReg(RUN_KEY, LEGACY_RUN_NAME);
   const current = readReg(RUN_KEY, RUN_NAME);
   if ((current !== null || hadLegacy) && current !== loginCommand()) writeRunValue();
+}
+
+// macOS: a LaunchAgent that starts Cloak when you log in. setLoginItemSettings would register Electron.app itself,
+// which, run from this folder rather than as a packaged app, opens Electron's default window instead of Cloak.
+const LAUNCH_AGENT = path.join(os.homedir(), "Library", "LaunchAgents", "com.cloak.app.plist");
+function launchAgentPlist() {
+  const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const args = [process.execPath, ...(app.isPackaged ? [] : [app.getAppPath()])].map((a) => `    <string>${xml(a)}</string>`).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.cloak.app</string>
+  <key>ProgramArguments</key>
+  <array>
+${args}
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+`;
+}
+function writeLaunchAgent() {
+  try {
+    fs.mkdirSync(path.dirname(LAUNCH_AGENT), { recursive: true });
+    fs.writeFileSync(LAUNCH_AGENT, launchAgentPlist());
+  } catch (e) { console.error("start at login:", e.message); }
 }
 
 function panelList() {
@@ -926,17 +960,24 @@ ipcMain.handle("set-provider", (_e, p) => {
   return authStatus();
 });
 ipcMain.handle("codex-status", () => codex.loginStatus(true));
-ipcMain.on("install-codex", () => openTerminal(
-  "Write-Host 'Installing the Codex CLI (OpenAI, from npm), which Cloak uses for ChatGPT...' -ForegroundColor Cyan; " +
-  "npm install -g @openai/codex; Write-Host ''; " +
-  "Write-Host 'Done. Go back to Cloak and click Sign in next to ChatGPT. You can close this window.' -ForegroundColor Green"));
+ipcMain.on("install-codex", () => openTerminal(IS_MAC
+  // Into ~/.local, not npm's global folder: with Node from nodejs.org that folder belongs to the system and needs sudo.
+  ? macSay("Installing the Codex CLI (OpenAI, from npm), which Cloak uses for ChatGPT...", 36) +
+    "npm install -g --prefix \"$HOME/.local\" @openai/codex; echo; " +
+    macSay("Done. Go back to Cloak and click Sign in next to ChatGPT. You can close this window.", 32)
+  : "Write-Host 'Installing the Codex CLI (OpenAI, from npm), which Cloak uses for ChatGPT...' -ForegroundColor Cyan; " +
+    "npm install -g @openai/codex; Write-Host ''; " +
+    "Write-Host 'Done. Go back to Cloak and click Sign in next to ChatGPT. You can close this window.' -ForegroundColor Green"));
 ipcMain.on("open-codex-login", () => {
   const exe = codex.findCodex();
   if (!exe) return;
-  openTerminal(
-    "Write-Host 'Sign in to ChatGPT:' -ForegroundColor Cyan; " +
-    "Write-Host '  Choose Sign in with ChatGPT and finish in your browser, then go back to Cloak and click Check.'; Write-Host ''; " +
-    `& '${exe.replace(/'/g, "''")}' login`);
+  openTerminal(IS_MAC
+    ? macSay("Sign in to ChatGPT:", 36) +
+      macSay("  Choose Sign in with ChatGPT and finish in your browser, then go back to Cloak and click Check.") + "echo; " +
+      `${shQuote(exe)} login`
+    : "Write-Host 'Sign in to ChatGPT:' -ForegroundColor Cyan; " +
+      "Write-Host '  Choose Sign in with ChatGPT and finish in your browser, then go back to Cloak and click Check.'; Write-Host ''; " +
+      `& '${exe.replace(/'/g, "''")}' login`);
 });
 ipcMain.handle("auth-status", () => authStatus());
 ipcMain.handle("auth-set", (_e, { mode, apiKey }) => {
@@ -970,25 +1011,32 @@ ipcMain.handle("auth-test", async () => {
   if (res.json.is_error) return { ok: false, error: aiError(res.json.result) };
   return { ok: true };
 });
-// Opens a visible PowerShell window. Used for the official Claude Code installer and for signing in.
+// Opens a visible terminal window: PowerShell on Windows, Terminal.app on a Mac (where the scripts are bash).
+// Used for the official Claude Code installer and for signing in.
 function openTerminal(script) {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY; // signing in should use your Claude account, not a key from the environment
   openTerminalWindow(script, { env });
 }
-ipcMain.on("install-claude", () => openTerminal(
-  "Write-Host 'Installing Claude Code (official installer from claude.ai)...' -ForegroundColor Cyan; " +
-  "irm https://claude.ai/install.ps1 | iex; Write-Host ''; " +
-  "Write-Host 'Done. Go back to Cloak and click Check again. You can close this window.' -ForegroundColor Green"));
+// One line of a bash script that prints text, optionally in a color (36 cyan, 32 green).
+const macSay = (text, color) => `printf '${color ? `\\033[${color}m` : ""}%s\\033[0m\\n' ${shQuote(text)}; `;
+ipcMain.on("install-claude", () => openTerminal(IS_MAC
+  ? macSay("Installing Claude Code (official installer from claude.ai)...", 36) +
+    "curl -fsSL https://claude.ai/install.sh | bash; echo; " +
+    macSay("Done. Go back to Cloak and click Check again. You can close this window.", 32)
+  : "Write-Host 'Installing Claude Code (official installer from claude.ai)...' -ForegroundColor Cyan; " +
+    "irm https://claude.ai/install.ps1 | iex; Write-Host ''; " +
+    "Write-Host 'Done. Go back to Cloak and click Check again. You can close this window.' -ForegroundColor Green"));
 ipcMain.on("open-claude-login", () => {
   const exe = findClaude();
   if (!exe) return;
-  openTerminal(
-    "Write-Host 'Sign in to Claude:' -ForegroundColor Cyan; " +
-    "Write-Host '  1. Type /login and press Enter'; " +
-    "Write-Host '  2. Choose your Claude account (Pro or Max), not Anthropic Console'; " +
-    "Write-Host '  3. Finish in your browser, then type /exit and go back to Cloak'; Write-Host ''; " +
-    `& '${exe.replace(/'/g, "''")}'`);
+  const steps = ["  1. Type /login and press Enter", "  2. Choose your Claude account (Pro or Max), not Anthropic Console",
+    "  3. Finish in your browser, then type /exit and go back to Cloak"];
+  openTerminal(IS_MAC
+    ? macSay("Sign in to Claude:", 36) + steps.map((s) => macSay(s)).join("") + "echo; " + shQuote(exe)
+    : "Write-Host 'Sign in to Claude:' -ForegroundColor Cyan; " +
+      steps.map((s) => `Write-Host '${s}'; `).join("") + "Write-Host ''; " +
+      `& '${exe.replace(/'/g, "''")}'`);
 });
 // Only a few known pages can be opened from the setup screens.
 ipcMain.on("open-external", (_e, url) => {
@@ -1405,7 +1453,7 @@ async function syncNotes(force) {
 }
 
 // ---------- tray ----------
-const prettyKey = (a) => a.replace(/CommandOrControl/g, "Ctrl").replace(/\+/g, "+");
+const prettyKey = (a) => a.replace(/CommandOrControl/g, IS_MAC ? "Cmd" : "Ctrl").replace(/\+/g, "+");
 function registerHotkeys(keys) {
   globalShortcut.unregisterAll();
   const failed = [];
@@ -1442,8 +1490,21 @@ function buildTray() {
   ]));
 }
 
+// The menu bar on a Mac wants a "template" icon: black shapes on transparent, which macOS recolors for light and
+// dark menu bars. It's made from the app icon's outline, so there's no second file to keep in step.
+function trayIcon() {
+  const img = nativeImage.createFromPath(path.join(__dirname, "icon.png")).resize({ width: 16, height: 16 });
+  if (!IS_MAC) return img;
+  const px = img.toBitmap(); // BGRA
+  for (let i = 0; i < px.length; i += 4) px[i] = px[i + 1] = px[i + 2] = 0;
+  const tpl = nativeImage.createFromBitmap(px, { ...img.getSize(), scaleFactor: 1 });
+  tpl.setTemplateImage(true);
+  return tpl;
+}
+
 // ---------- startup ----------
 app.whenReady().then(() => {
+  if (IS_MAC) app.dock?.hide(); // like the Windows version: no taskbar/Dock icon, just the pill and the menu bar icon
   try { syncLoginItem(); } catch {}
   fs.mkdirSync(workDir(), { recursive: true });
   writeInstructions();
@@ -1455,6 +1516,8 @@ app.whenReady().then(() => {
   listener = makeListener();
   listener.auto = loadConfig().listenAuto !== false;
   // The computer's sound for Listen: Windows "loopback" capture. Only the Listen panel may ask for it.
+  // (Electron 33 has no system-sound capture on macOS, so the Mac Listen panel records from a virtual audio
+  // device such as BlackHole instead and never asks for this.)
   session.defaultSession.setDisplayMediaRequestHandler((req, cb) => {
     if (!panels.listen || req.frame?.url !== panels.listen.webContents.getURL()) return cb({});
     desktopCapturer.getSources({ types: ["screen"] }).then((s) => cb({ video: s[0], audio: "loopback" })).catch(() => cb({}));
@@ -1496,9 +1559,9 @@ app.whenReady().then(() => {
   const failed = registerHotkeys(loadConfig().hotkeys);
   if (failed.length) registerHotkeys(DEFAULT_HOTKEYS); // a saved shortcut is taken now: fall back to the defaults
 
-  tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "icon.png")).resize({ width: 16, height: 16 }));
+  tray = new Tray(trayIcon());
   tray.setToolTip(`Cloak ${app.getVersion()}`);
-  tray.on("click", toggleAll);
+  if (!IS_MAC) tray.on("click", toggleAll); // a Mac menu bar icon opens its menu on click instead
   buildTray();
 });
 
