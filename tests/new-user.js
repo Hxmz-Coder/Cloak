@@ -50,7 +50,7 @@ app.on("web-contents-created", (_e, wc) => {
   wc.on("render-process-gone", (_ev, d) => errors.push(`${wc.getTitle()}: renderer crashed (${d.reason})`));
 });
 
-const { toggleAll, checkTaskNotifications, listen, focus } = require("../main.js");
+const { toggleAll, checkTaskNotifications, listen, focus, talk } = require("../main.js");
 const { taskNotifications, NotifyState, DEFAULT_NOTIFY } = require("../lib/notify");
 
 // ---------- helpers ----------
@@ -679,38 +679,6 @@ const SCENARIOS = {
     await wait(800);
     check("Stop turns Listen mode off and stops capturing", !(await call("listen-status")).listening && (await call("get-modes")).active === "general" && !(await js(lp, `return !!capture`)));
 
-    // Talk mode: you speak, Claude answers out loud. A stand-in microphone (never the real one), and the reply is
-    // caught instead of being played.
-    await js(lp, `navigator.mediaDevices.getUserMedia = async () => { const c = new AudioContext(); return c.createMediaStreamDestination().stream; }; return 1`);
-    await js(w, `window.__spoken = ""; speechSynthesis.speak = (u) => { window.__spoken = u.text; setTimeout(() => u.onend && u.onend(), 50); }; return 1`);
-    await call("set-active-mode", "talk");
-    await wait(1500);
-    check("Talk mode turns the microphone on", await js(lp, `return !!mic`));
-    let voice;
-    if (real) {
-      const wav2 = path.join(profile, "question.wav");
-      require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-Command",
-        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${wav2}', $f); $s.Speak('What is the capital of Japan?'); $s.Dispose()`], { windowsHide: true });
-      const b2 = fs.readFileSync(wav2);
-      voice = Float32Array.from(new Int16Array(b2.buffer, b2.byteOffset + 44, (b2.length - 44) >> 1), (v) => (v / 32768) * 0.3);
-    } else {
-      voice = new Float32Array(16000 * 2);
-      for (let i = 0; i < voice.length; i++) voice[i] = 0.02 * Math.sin(i / 6);
-    }
-    const before = await js(w, `return document.querySelectorAll("#log .bot").length`);
-    await js(lp, `const pcm = new Float32Array(Uint8Array.from(atob("${Buffer.from(voice.buffer).toString("base64")}"), (c) => c.charCodeAt(0)).buffer);
-      for (let i = 0; i < pcm.length; i += 1365) micClips(pcm.slice(i, i + 1365));
-      for (let i = 0; i < 20; i++) micClips(new Float32Array(1365)); return 1`);
-    let spoken = "";
-    for (let i = 0; i < 60 && !spoken; i++) { await wait(1500); spoken = await js(w, `return window.__spoken`); }
-    const youSaid = await js(w, `return [...document.querySelectorAll("#log .user")].pop()?.textContent || ""`);
-    check("what you say goes to the chat", real ? /japan/i.test(youSaid) : /mitochondria/i.test(youSaid), youSaid);
-    check("the reply is read out loud, as plain speech", (real ? /tokyo/i.test(spoken) : /ATP|energy/i.test(spoken)) && !/[*#`]/.test(spoken) && spoken.length < 400, spoken);
-    transcript.push({ label: "talk", a: `you said: ${youSaid} | spoken reply: ${spoken}` });
-    check("the chat got a new answer", (await js(w, `return document.querySelectorAll("#log .bot").length`)) > before);
-    await call("set-active-mode", "general");
-    await wait(800);
-    check("leaving Talk mode turns the microphone off", !(await js(lp, `return !!mic`)));
 
     ipcMain.emit("open-settings", {}, "memory"); await wait(1500);
     const sw = await win("Claude Settings");
@@ -718,6 +686,72 @@ const SCENARIOS = {
     check("Settings > Memory lists what it remembers and its files", mem.facts >= 2 && mem.files === 1, JSON.stringify(mem));
     await call("memory-files-remove", mf[0].id);
     check("forgetting a file deletes Cloak's copy", !fs.existsSync(mf[0].path) && (await call("memory-files-list")).length === 0);
+  },
+
+  // Talk: you speak, Claude answers out loud. A stand-in microphone (never the real one), and the voice is recorded
+  // instead of played. Real speech engine and voice if CLOAK_TEST_VOICE_DIR has both.
+  async "talk"() {
+    const real = !!process.env.CLOAK_TEST_VOICE_DIR;
+    await call("welcome-done", { profile: {}, mode: "general" });
+    ipcMain.emit("toggle-panel", {}, "talk"); await wait(1500);
+    const tp = await win("Claude Talk");
+    check("Talk widget opens, set up", tp && tp.isVisible() && (await call("talk-status")).installed);
+    await js(tp, `navigator.mediaDevices.getUserMedia = async () => { const c = new AudioContext(); return c.createMediaStreamDestination().stream; };
+      window.__played = []; enqueue = (item) => { window.__played.push({ at: performance.now(), what: item.text ? "system voice" : "voice " + item.pcm.length }); }; return 1`);
+    const st = await call("talk-start");
+    for (let i = 0; i < 60 && (await call("talk-status")).status === "loading"; i++) await wait(1000); // the voice loads once
+    check("Start turns the microphone on, without changing the mode", st.ok && (await call("talk-status")).active && (await js(tp, `return !!mic`)) && (await call("get-modes")).active === "general");
+
+    const speech = (text, level) => {
+      if (!real) { const v = new Float32Array(16000 * 2); for (let i = 0; i < v.length; i++) v[i] = level * Math.sin(i / 6) * (0.6 + 0.4 * Math.sin(i / 900)); return v; }
+      const wav = path.join(profile, `say-${Date.now()}.wav`);
+      require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-Command",
+        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${wav}', $f); $s.Speak('${text}'); $s.Dispose()`], { windowsHide: true });
+      const b = fs.readFileSync(wav);
+      return Float32Array.from(new Int16Array(b.buffer, b.byteOffset + 44, (b.length - 44) >> 1), (x) => (x / 32768) * level);
+    };
+    const feedMic = (pcm) => js(tp, `const pcm = new Float32Array(Uint8Array.from(atob("${Buffer.from(pcm.buffer).toString("base64")}"), (c) => c.charCodeAt(0)).buffer);
+      for (let i = 0; i < pcm.length; i += 1365) clips(pcm.slice(i, i + 1365));
+      for (let i = 0; i < 20; i++) clips(new Float32Array(1365)); return performance.now()`);
+    const lines = () => js(tp, `return [...document.querySelectorAll("#log .line")].map((l) => l.className.replace("line ", "") + ": " + l.textContent)`);
+
+    // Background noise is not "heard" as words (this is what made Talk answer things nobody said).
+    const noise = new Float32Array(16000 * 4);
+    for (let i = 0; i < noise.length; i++) noise[i] = (Math.random() - 0.5) * 0.008;
+    await feedMic(noise); await wait(real ? 6000 : 2000);
+    check("background noise isn't turned into a question", !(await lines()).some((l) => l.startsWith("you")), JSON.stringify(await lines()));
+
+    const sent = await feedMic(speech("What is the capital of Japan?", real ? 0.5 : 0.05));
+    let played = [];
+    for (let i = 0; i < 60 && !played.length; i++) { await wait(500); played = await js(tp, `return window.__played`); }
+    const firstVoice = played.length ? ((played[0].at - sent) / 1000).toFixed(1) : "never";
+    let ls = [];
+    for (let i = 0; i < 30 && !ls.some((l) => l.startsWith("claude")); i++) { await wait(500); ls = await lines(); }
+    check("what you say shows up", ls.some((l) => real ? /you: .*japan/i.test(l) : /you: .*mitochondria/i.test(l)), JSON.stringify(ls));
+    check("Claude answers, in a few spoken sentences", ls.some((l) => real ? /claude: .*tokyo/i.test(l) : /claude: .*(ATP|energy)/i.test(l)) && !ls.some((l) => /claude: .*[*#`]/.test(l)), JSON.stringify(ls));
+    check(`the answer is spoken in the voice, starting ${firstVoice}s after you stop`, played.length && /^voice/.test(played[0].what) && Number(firstVoice) < 12, JSON.stringify(played.slice(0, 3)));
+    transcript.push({ label: "talk", a: `${ls.join(" | ")} | first sound after ${firstVoice}s, ${played.length} sentence(s)` });
+
+    // Interrupting stops the rest of the answer.
+    await js(tp, `window.__played = []; return 1`);
+    talk().respond("Tell me a story about a dragon and a knight in about eight sentences.").catch(() => {});
+    for (let i = 0; i < 60 && !(await js(tp, `return window.__played.length`)); i++) await wait(500);
+    ipcMain.emit("talk-interrupt"); await wait(300);
+    const atStop = await js(tp, `return window.__played.length`);
+    await wait(8000);
+    const after = await js(tp, `return window.__played.length`);
+    check("interrupting stops the rest of the answer", atStop >= 1 && after === atStop && (await call("talk-status")).status === "listening", `${atStop} -> ${after}`);
+
+    ipcMain.emit("talk-set-voice", {}, "am_michael"); await wait(300);
+    check("the voice can be changed", (await call("talk-status")).voice === "am_michael" && (await js(tp, `return document.getElementById("voice").value`)) === "am_michael");
+
+    // Talk mode: the same, always on; Stop in the widget turns the mode off.
+    await call("talk-stop"); await wait(600);
+    check("Stop turns the microphone off", !(await call("talk-status")).active && !(await js(tp, `return !!mic`)));
+    await call("set-active-mode", "talk"); await wait(1500);
+    check("Talk mode listens", (await call("talk-status")).active && (await call("talk-status")).mode && (await js(tp, `return !!mic`)));
+    await call("talk-stop"); await wait(800);
+    check("Stop in Talk mode turns the mode off", (await call("get-modes")).active === "general" && !(await js(tp, `return !!mic`)));
   },
 
   // Sign-in errors and odd input.
@@ -751,7 +785,7 @@ const SCENARIOS = {
     check("new chat forgets the old conversation", r.ok && /\bno\b/i.test(r.text), r.text);
   },
 };
-function SCENARIO_NAMES() { return ["first-run", "notifications", "chatgpt", "listen", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
+function SCENARIO_NAMES() { return ["first-run", "notifications", "chatgpt", "listen", "talk", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"]; }
 
 // ---------- run ----------
 app.whenReady().then(async () => {

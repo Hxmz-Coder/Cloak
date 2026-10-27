@@ -79,14 +79,21 @@ contextBridge.exposeInMainWorld("overlay", {
   onListenTranscript: on("listen-transcript"),
   onListenFeed: on("listen-feed"),
   onListenCapture: on("listen-capture"),
-  // Talk mode
+  // Talk (the widget and Talk mode)
+  talkStatus: () => ipcRenderer.invoke("talk-status"),
+  talkInstall: () => ipcRenderer.invoke("talk-install"),
+  talkStart: () => ipcRenderer.invoke("talk-start"),
+  talkStop: () => ipcRenderer.invoke("talk-stop"),
   talkHeard: (pcm) => ipcRenderer.invoke("talk-heard", pcm),
-  talkDone: () => ipcRenderer.send("talk-done"),
-  talkSpeaking: (on) => ipcRenderer.send("talk-speaking", on),
+  talkInterrupt: () => ipcRenderer.send("talk-interrupt"),
+  talkReset: () => ipcRenderer.send("talk-reset"),
+  talkSetVoice: (v) => ipcRenderer.send("talk-set-voice", v),
+  onTalkState: on("talk-state"),
+  onTalkLine: on("talk-line"),
   onTalkCapture: on("talk-capture"),
-  onTalkSpeaking: on("talk-speaking"),
-  onTalkMode: on("talk-mode"),
-  onTalkUtterance: on("talk-utterance"),
+  onTalkAudio: on("talk-audio"),
+  onTalkSay: on("talk-say"),
+  onTalkStopAudio: on("talk-stop-audio"),
 
   // memory (Settings > Memory)
   listMemories: () => ipcRenderer.invoke("memories-list"),

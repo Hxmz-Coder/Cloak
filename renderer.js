@@ -158,6 +158,7 @@ const ICONS = {
   tasks: '<svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>',
   notes: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h5"/></svg>',
   listen: '<svg viewBox="0 0 24 24"><path d="M3 10v4M7 7v10M11 4v16M15 8v8M19 11v2"/></svg>',
+  talk: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v10H3z"/></svg>',
   all: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>',
 };
@@ -241,7 +242,6 @@ async function turn(userHtml, call) {
   live = null;
   setBusy(false);
   showReply(el, res);
-  if (res.ok && !res.stopped && res.text) speak(res.text);
   const watching = mode === "chat" && document.hasFocus();
   if (res.ok && !res.stopped) window.overlay.chatFinished({ watching, text: res.text, approvals: res.approvals?.length || 0 });
 }
@@ -341,28 +341,6 @@ async function findTasks() {
 
 window.overlay.onRunPrompt((text) => { openAndFocus("chat"); submit(text); });
 window.overlay.onOpenChat(() => openAndFocus("chat"));
-
-// ---------- Talk mode: what you said comes in as a message, and the reply is read aloud ----------
-let talkOn = false;
-window.overlay.onTalkMode((on) => { talkOn = on; if (!on) speechSynthesis.cancel(); });
-window.overlay.onTalkUtterance(async (text) => {
-  if (busy) return window.overlay.talkDone(); // still answering: don't cut that answer off
-  speechSynthesis.cancel();
-  setMode("chat");
-  await submit(text);
-  window.overlay.talkDone();
-});
-// Markdown and symbols would be read out literally: speak plain text.
-const speakable = (t) => String(t || "").replace(/```[\s\S]*?```/g, " (code in the chat) ").replace(/[*_#`>|]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1").replace(/\s+/g, " ").trim();
-function speak(text) {
-  const say = speakable(text);
-  if (!talkOn || !say) return;
-  const u = new SpeechSynthesisUtterance(say); // the system's default voice
-  u.rate = 1.05;
-  window.overlay.talkSpeaking(true);
-  u.onend = u.onerror = () => window.overlay.talkSpeaking(false);
-  speechSynthesis.speak(u);
-}
 
 // Claude or ChatGPT (Settings > General). Switching starts a new chat.
 function setAiName(name) { input.placeholder = `Ask ${name || "Claude"}, or tell it what to do…`; }

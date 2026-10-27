@@ -11,6 +11,7 @@ const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
 const { MemoryStore, extractMemoryBlocks } = require("./lib/memories");
 const { Listener } = require("./lib/listen");
+const { Talker } = require("./lib/talk");
 const launcher = require("./lib/launcher");
 const { FocusChecker, FOCUS_DEFAULTS } = require("./lib/focus");
 const premium = require("./lib/premium");
@@ -145,6 +146,7 @@ const PANELS = {
   tasks: { file: "tasks.html", size: [360, 440], min: [260, 200], label: "Tasks" },
   notes: { file: "notes.html", size: [380, 460], min: [260, 200], label: "Notes" },
   listen: { file: "listen.html", size: [400, 540], min: [300, 320], label: "Listen" },
+  talk: { file: "talk.html", size: [360, 540], min: [300, 380], label: "Talk" },
   settings: { file: "settings.html", size: [800, 600], min: [800, 600], label: "Settings", standalone: true, fixed: true },
   welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
@@ -157,7 +159,7 @@ const AUTO_SCAN_EVERY_MS = 40 * 60_000;
 
 let widget, tray;
 const panels = {};     // name -> BrowserWindow
-let memory, tasks, widgets, memories, listener;
+let memory, tasks, widgets, memories, listener, talker;
 let building = false;
 const widgetIdBySender = new Map(); // webContents id -> custom widget id
 const widgetStatus = {};            // custom widget id -> status line it offers the pill
@@ -222,6 +224,7 @@ function setActiveMode(id) {
   if (!getModes().some((m) => m.id === id)) return false;
   const cur = loadConfig().activeMode || "general";
   if (id === "listen" && cur !== "listen") saveConfig({ modeBeforeListen: cur }); // Stop in the Listen panel goes back to it
+  if (id === "talk" && cur !== "talk") saveConfig({ modeBeforeTalk: cur });
   saveConfig({ activeMode: id });
   applyMode();
   buildTray();
@@ -344,7 +347,7 @@ function createPanel(name) {
   };
   win.on("move", remember);
   win.on("resize", remember);
-  if (name === "listen") win.webContents.setBackgroundThrottling(false); // keeps capturing while minimized
+  if (name === "listen" || name === "talk") win.webContents.setBackgroundThrottling(false); // keeps listening while minimized
   // Closed some other way than our hide (e.g. Alt+F4): forget it, or the next click hits a destroyed window.
   const wcId = win.webContents.id;
   win.on("closed", () => {
@@ -356,7 +359,7 @@ function createPanel(name) {
   win.webContents.on("render-process-gone", (_e, d) => {
     if (d.reason === "clean-exit" || panels[name] !== win) return;
     destroyPanel(name);
-    if (name === "listen") { createPanel("listen"); syncListenToMode(); }
+    if (name === "listen" || name === "talk") { createPanel(name); syncListenToMode(); } // they keep running in the background
   });
   panels[name] = win;
   return win;
@@ -404,7 +407,7 @@ function togglePanel(name) { isShowing(name) ? hidePanel(name) : showPanel(name)
 // repaint (a graphics reset during sleep can leave see-through windows blank). Same for the top widget.
 function recoverWindows() {
   for (const name of Object.keys(panels)) {
-    if (!usable(panels[name])) { destroyPanel(name); if (name === "listen") { createPanel("listen"); syncListenToMode(); } }
+    if (!usable(panels[name])) { destroyPanel(name); if (name === "listen" || name === "talk") { createPanel(name); syncListenToMode(); } }
     else if (panels[name].isVisible()) panels[name].webContents.invalidate();
   }
   if (widget && !widget.isDestroyed()) {
@@ -1033,8 +1036,9 @@ function writeLaunchAgent() {
 
 function panelList() {
   const cfg = loadConfig();
-  const list = ["tasks", "notes", "listen"].map((name) => ({ name, label: PANELS[name].label, builtin: true, editable: EDITABLE_BUILTINS.has(name),
-    customized: isCustomized(name), canUndo: isCustomized(name) && widgets.canUndo(name), active: name === "listen" && !!listener?.listening }));
+  const list = ["tasks", "notes", "listen", "talk"].map((name) => ({ name, label: PANELS[name].label, builtin: true, editable: EDITABLE_BUILTINS.has(name),
+    customized: isCustomized(name), canUndo: isCustomized(name) && widgets.canUndo(name),
+    active: (name === "listen" && !!listener?.listening) || (name === "talk" && !!talker?.active) }));
   for (const m of widgets.list().filter((w) => !PANELS[w.id])) list.push({ name: m.id, label: m.name, description: m.description, builtin: false, canUndo: widgets.canUndo(m.id), updated: m.updated });
   return list.map((p) => ({ ...p, enabled: cfg.panelEnabled[p.name] !== false, visible: isShowing(p.name) }));
 }
@@ -1427,18 +1431,66 @@ function syncListenToMode() {
   const wc = panels.listen.webContents;
   const toPanel = (ch, data) => (wc.isLoading() ? wc.once("did-finish-load", () => wc.send(ch, data)) : wc.send(ch, data));
   listener.mode = activeMode().id === "listen";
-  const talk = activeMode().id === "talk" && premium.unlocked("talk", loadConfig());
-  if ((listener.mode || listener.manual || talk) && !listener.installed()) { listener.manual = false; showPanel("listen", true); return; } // "Set up Listen"
-  if ((listener.mode || listener.manual) && premium.unlocked("listen", loadConfig())) {
+  const talking = !!talker?.active;
+  if ((listener.mode || listener.manual) && !listener.installed()) { listener.manual = false; showPanel("listen", true); }
+  else if ((listener.mode || listener.manual) && hasPremium("listen")) {
     if (!listener.listening) listener.start();
     else listener.setState(listener.state.status, listener.state.detail); // tells the panel the mode changed
     toPanel("listen-capture", true);
-  } else if (listener.listening) listener.stop(talk);
-  // Talk mode: the panel listens to the microphone; the speech engine runs for it.
-  if (talk && !listener.engine) listener.startEngine();
-  if (!talk && !listener.listening && listener.engine) listener.stop();
-  toPanel("talk-capture", talk);
-  widget?.webContents.send("talk-mode", talk);
+  } else if (listener.listening) listener.stop(talking); // Talk still needs the speech engine
+  syncTalk();
+}
+// Talk runs while the Talk widget was started and/or Talk mode is on. It shares Listen's speech engine (your voice
+// to text) and adds the voice (text to speech).
+function syncTalk() {
+  if (!talker || !panels.talk) return;
+  const wc = panels.talk.webContents;
+  const toPanel = (ch, data) => (wc.isLoading() ? wc.once("did-finish-load", () => wc.send(ch, data)) : wc.send(ch, data));
+  talker.mode = activeMode().id === "talk";
+  const want = talker.active && hasPremium("talk");
+  if (want && !talker.installed()) { talker.manual = false; showPanel("talk", true); toPanel("talk-state", talker.state()); return; } // "Set up Talk"
+  if (want) {
+    if (!listener.engine) listener.startEngine();
+    if (talker.status === "off" || talker.status === "error") talker.start();
+    else talker.setStatus(talker.status, talker.detail); // tells the panel the mode changed
+    toPanel("talk-capture", true);
+  } else if (talker.status !== "off") {
+    talker.stop();
+    toPanel("talk-capture", false);
+    if (!listener.listening && listener.engine) listener.stop();
+  }
+  notifyPanels();
+}
+// Talk's own conversation: the fastest model, no tools, short spoken replies. Separate from the chat bar, so it's
+// warm and quick, and the chat keeps its own history.
+const TALK_SYSTEM = `You are Claude, talking with the user out loud through Cloak, a small assistant on their computer. What they say comes from speech recognition (read past small mistakes), and everything you write is read aloud to them by a voice.
+- Talk like a person in a conversation: warm, natural and brief. One to three short sentences, unless they ask for more.
+- No markdown, lists, headings, tables, code, links or emoji. Say numbers, symbols and abbreviations the way you'd say them out loud.
+- For steps, say them in a sentence ("First..., then...").
+- If you're not sure what they meant, ask a short question back.`;
+const talkDir = () => path.join(workDir(), "talk");
+function makeTalkChat() {
+  fs.mkdirSync(talkDir(), { recursive: true });
+  const promptFile = path.join(talkDir(), "system-prompt.txt");
+  fs.writeFileSync(promptFile, TALK_SYSTEM);
+  fs.writeFileSync(path.join(talkDir(), "AGENTS.md"), TALK_SYSTEM.replace("You are Claude", "You are ChatGPT"));
+  if (provider() === "chatgpt") return new codex.CodexChat(() => ({ cwd: talkDir(), effort: "low", addDirs: [], alwaysWrite: false }));
+  return new ChatSession(() => ({ cwd: talkDir(), tools: "", allowedTools: [], addDirs: [], systemPromptFile: promptFile, model: "haiku", effort: "low", mode: "talk", auth: authSignature() }));
+}
+function makeTalker() {
+  return new Talker({
+    emit: (ch, data) => { panels.talk?.webContents.send(ch, data); if (ch === "talk-state") notifyPanels(); },
+    voiceDir: path.join(userData(), "voice"),
+    listenInstalled: () => listener.installed(),
+    transcribe: (pcm) => listener.transcribe(pcm instanceof Float32Array ? pcm : new Float32Array(pcm || []), { keep: false }),
+    makeChat: makeTalkChat,
+    context: () => {
+      const remembered = hasPremium("memory") ? memories.context().slice(0, 1500) : "";
+      return `Now: ${todayLine()}, ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.${remembered ? ` What the user asked you to remember:\n${remembered}` : ""}`;
+    },
+    aiError: (t) => aiError(t),
+    config: () => loadConfig(),
+  });
 }
 // What's been playing on the computer lately, for the chat's context while Listen is on.
 const listenContext = (minutes) => (listener?.listening ? listener.recent(minutes, 3000) : "");
@@ -1472,24 +1524,31 @@ function toggleListenMode() {
     body: on ? "Answers to questions it hears will pop up here." : `Back to ${activeMode().name}.`, target: { type: "panel", name: "listen" } });
 }
 ipcMain.handle("listen-status", () => listener.status());
-// Talk mode: something you said (16 kHz mono from the microphone). Turned into text, then sent to the chat like a
-// typed message; the reply is read aloud by the top widget.
-let talkBusy = false, talkTimer = null;
-ipcMain.handle("talk-heard", async (e, pcm) => {
-  if (activeMode().id !== "talk" || talkBusy) return { skipped: true };
-  const r = await listener.transcribe(pcm instanceof Float32Array ? pcm : new Float32Array(pcm || []), { keep: false });
-  const text = (r.text || "").trim();
-  if (r.error || text.split(/\s+/).length < 2) return { text, skipped: true }; // a cough, a single "um"
-  talkBusy = true;
-  clearTimeout(talkTimer);
-  talkTimer = setTimeout(() => { talkBusy = false; }, 120_000); // in case the chat bar never says it's done
-  showWidget(false);
-  widget.webContents.send("talk-utterance", text);
-  return { text };
+// ---------- Talk (lib/talk.js) ----------
+ipcMain.handle("talk-status", () => talker.state());
+ipcMain.handle("talk-install", async () => {
+  const r = await talker.install();
+  if (r.ok) syncTalk(); // set up from Talk mode or Start: start talking now
+  return r;
 });
-ipcMain.on("talk-done", () => { talkBusy = false; });
-// While the reply is being read aloud, the microphone is ignored (so Talk doesn't hear itself).
-ipcMain.on("talk-speaking", (_e, on) => panels.listen?.webContents.send("talk-speaking", !!on));
+// The widget's Start / Stop. (While Talk mode is on, Stop also turns the mode off.)
+ipcMain.handle("talk-start", () => {
+  if (!hasPremium("talk")) return { error: "Talk is part of Cloak Premium." };
+  talker.manual = true;
+  syncTalk();
+  return { ok: true };
+});
+ipcMain.handle("talk-stop", () => {
+  talker.manual = false;
+  if (activeMode().id === "talk") setActiveMode(loadConfig().modeBeforeTalk || "general");
+  else syncTalk();
+  return true;
+});
+// Something you said: 16 kHz mono from the microphone, at a pause.
+ipcMain.handle("talk-heard", (_e, pcm) => talker.heard(pcm));
+ipcMain.on("talk-interrupt", () => talker.interrupt());
+ipcMain.on("talk-reset", () => talker.reset());
+ipcMain.on("talk-set-voice", (_e, v) => { saveConfig({ talkVoice: String(v) }); talker.setStatus(talker.status, talker.detail); });
 ipcMain.handle("listen-install", async () => {
   const r = await listener.install();
   if (r.ok) syncListenToMode(); // set up from the Listen mode: start listening now
@@ -1641,6 +1700,7 @@ function buildTray() {
     { label: "Tasks", click: () => togglePanel("tasks") },
     { label: "Notes", click: () => togglePanel("notes") },
     { label: "Listen", click: () => togglePanel("listen") },
+    { label: "Talk", click: () => togglePanel("talk") },
     { label: "Mode", submenu: modeMenuItems() },
     { label: `Listen mode    ${prettyKey(cfg.hotkeys.listen)}`, type: "checkbox", checked: activeMode().id === "listen", click: toggleListenMode },
     { label: "Settings", click: () => openSettings() },
@@ -1687,6 +1747,7 @@ app.whenReady().then(() => {
   memories = new MemoryStore(path.join(userData(), "memories.json"), (list, files) => { broadcast("memories-changed", list); broadcast("memory-files-changed", files); });
   for (const f of memories.files) if (f.status === "pending") summarizeMemoryFile(f);
   listener = makeListener();
+  talker = makeTalker();
   listener.auto = loadConfig().listenAuto !== false;
   // The computer's sound for Listen: Windows "loopback" capture. Only the Listen panel may ask for it.
   // (Electron 33 has no system-sound capture on macOS, so the Mac Listen panel records from a virtual audio
@@ -1726,6 +1787,7 @@ app.whenReady().then(() => {
   createPanel("tasks");
   createPanel("notes");
   createPanel("listen");
+  createPanel("talk");
   syncListenToMode(); // Listen mode was on when Cloak closed: keep listening
   for (const m of widgets.list()) if (!PANELS[m.id]) createPanel(m.id); // Claude's Tasks/Notes were created just above
   powerMonitor.on("resume", () => setTimeout(recoverWindows, 1500));
@@ -1743,9 +1805,9 @@ app.whenReady().then(() => {
   buildTray();
 });
 
-app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat?.kill(); listener?.stop(); });
+app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat?.kill(); listener?.stop(); talker?.stop(); });
 // Also clean up when Cloak exits without a normal quit (app.exit, a crash handler, etc.); the screen-memory
 // helper would otherwise keep the process from closing.
 process.on("exit", () => { try { memory?.stop(); chat?.kill(); } catch {} });
-module.exports = { toggleAll, checkTaskNotifications, listen: () => listener, focus: () => focus }; // for test scripts
+module.exports = { toggleAll, checkTaskNotifications, listen: () => listener, focus: () => focus, talk: () => talker }; // for test scripts
 app.on("window-all-closed", (e) => e.preventDefault());

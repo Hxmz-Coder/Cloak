@@ -55,7 +55,8 @@ Before you start, write down: your Mac model (Apple silicon M1/M2/... or Intel),
 - [ ] Setup guide (Settings, General, Setup guide, then Next to **Connect Claude**): if you're already signed in, is step 2 ticked off by itself? (To try a fresh sign-in, run `claude auth logout` in Terminal first, click **Sign in**, finish in the browser, and watch it tick off without clicking anything else.)
 - [ ] Ask the chat "Explain how photosynthesis works." Is the answer a few lines, not paragraphs? Is there a **Continue in Claude** button?
 - [ ] Switch to **Homework** mode, open YouTube for 4 minutes. Did macOS ask for Screen Recording (if not already allowed)? Did a "Back to it?" notification appear?
-- [ ] Switch to **Talk** mode. Did macOS ask for the microphone? Say "What's the capital of Japan?" and pause. Does your question appear in the chat, and does Cloak say the answer out loud?
+- [ ] Open the **Talk** widget (menu bar icon, Talk) and click **Set up Talk** (a big download). Then **Start talking**. Did macOS ask for the microphone? Say "What's the capital of Japan?" and pause. Does your question appear, and does a natural-sounding voice say the answer within a few seconds? Click the circle while it's talking: does it stop? Try another voice from the list.
+- [ ] Stay quiet with the TV or music on for a minute while Talk is on. Does it ever "hear" a question nobody asked?
 - [ ] Tasks: is there a **Done** tab with your finished tasks?
 - [ ] Put the Mac to sleep for a few minutes, wake it, and click a widget's button. Does it open with its content?
 
