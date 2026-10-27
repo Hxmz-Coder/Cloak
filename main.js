@@ -60,7 +60,7 @@ function relaunchedOutsidePackage() {
   } catch {}
   try { fs.rmSync(probe, { force: true }); } catch {}
   if (!hidden) return false;
-  try { fs.rmSync(hidden, { force: true }); } catch {}
+  try { fs.rmSync(hidden, { force: true }); fs.rmdirSync(path.dirname(hidden)); } catch {} // the folder too, if the probe was all that was in it
   const bat = path.join(os.tmpdir(), "cloak-relaunch.bat");
   const args = [app.isPackaged ? "" : `"${app.getAppPath()}"`, "--cloak-relaunched"].filter(Boolean).join(" ");
   fs.writeFileSync(bat, `@start "" "${process.execPath}" ${args}\r\n`);
