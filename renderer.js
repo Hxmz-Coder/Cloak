@@ -304,6 +304,7 @@ async function submit(textOverride, image) {
   const text = (textOverride ?? input.value).trim();
   const shot = image ?? pendingShot;
   if (!text && !shot) return;
+  if (text && !textOverride) lastSent = text;
   input.value = ""; setShot(null);
   const userHtml = (shot ? `<img class="shot" src="data:image/png;base64,${shot}" />` : "") + esc(text || "What's on my screen?");
   await turn(userHtml, () => window.overlay.ask({ text, image: shot }));
@@ -428,8 +429,11 @@ async function capture() {
   try { return await window.overlay.capture(); } finally { capturing = false; }
 }
 
+let lastSent = "";
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+  // Up in an empty box: your last message back, to fix or send again.
+  if (e.key === "ArrowUp" && !input.value && lastSent) { e.preventDefault(); input.value = lastSent; }
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
@@ -565,7 +569,7 @@ $("edReset").onclick = async () => {
   taskCache = await window.overlay.listTasks();
   // Bring back the conversation from last time.
   for (const m of await window.overlay.chatHistory()) {
-    if (m.role === "user") add("user", (m.image ? '<span class="tag-shot">screenshot</span>' : "") + esc(m.text));
+    if (m.role === "user") { add("user", (m.image ? '<span class="tag-shot">screenshot</span>' : "") + esc(m.text)); lastSent = m.text; }
     else add("bot", md(m.text));
   }
   renderTiles();

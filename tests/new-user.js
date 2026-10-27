@@ -147,6 +147,8 @@ const SCENARIOS = {
     }
     const sel = await js(s, `return [...document.querySelectorAll("#scMode option")].map(o => o.textContent)`);
     check("shortcut editor lists all modes", Array.isArray(sel) && sel.length >= 5, sel);
+    const keys = await js(s, `show("keys"); return [...document.querySelectorAll(".key")].map(b => b.dataset.k + "=" + b.textContent)`);
+    check("Keyboard settings include the Listen mode shortcut", keys.some((k) => /^listen=Ctrl\+Alt\+L$/.test(k)), keys.join(", "));
     const bad = await call("set-hotkey", "toggle", "Ctrl+Alt+NotAKey");
     check("invalid hotkey is rejected gracefully", bad && bad.ok === false, JSON.stringify(bad));
     await call("set-theme", { accent: "#5b8def", opacity: 0.7 });
@@ -570,6 +572,7 @@ const SCENARIOS = {
     let pop = null;
     for (let i = 0; i < 45; i++) { await wait(1000); const n = await island(); if (n.on && /France/.test(n.title)) { pop = n; break; } }
     check("in Listen mode the answer pops up to read out", pop && /^Q:/.test(pop.title) && /Paris/.test(pop.body) && pop.body.length < 120, JSON.stringify(pop));
+    check("the pop-up has a Copy button", await js(w, `return !!document.querySelector('#nActions [data-act="copy"]')`));
     await clearIsland();
 
     // Answers use what it was told to remember.
@@ -641,6 +644,9 @@ const SCENARIOS = {
     await js(w, `input.value = "<img src=x onerror=\\"document.title='HACKED'\\"> what is 1+1?"; submit(); return 1`);
     await wait(15000);
     check("HTML in a message is shown as text, not run", w.getTitle() !== "HACKED" && (await js(w, `return !!document.querySelector("#log img[src='x']")`)) === false);
+    const recalled = await js(w, `input.value = ""; input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" })); return input.value`);
+    check("Up arrow brings back the last message", /what is 1\+1/.test(recalled), recalled);
+    await js(w, `input.value = ""; return 1`);
     r = await ask("x".repeat(15000) + "\n\nHow many characters did I just send you, roughly? Just a rough number.");
     check("very long message gets an answer", r.ok, r.error || r.text);
     const p = call("ask", { text: "Write a 500 word story about a lighthouse." });

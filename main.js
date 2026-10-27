@@ -36,6 +36,31 @@ app.setName("cloak");
   app.setPath("userData", dir);
 })();
 
+// Started from inside a packaged (Microsoft Store style) app, such as a terminal in the Claude desktop app,
+// Windows quietly redirects Cloak's saves to that app's private folder, splitting your data in two, and Cloak
+// can't open terminal windows. If that's the case, start again normally (through Explorer) and quit this copy.
+function relaunchedOutsidePackage() {
+  if (process.env.CLOAK_DATA_DIR || process.env.OVERCLAUDE_DATA_DIR || process.platform !== "win32" || process.argv.includes("--cloak-relaunched")) return false;
+  const pkgs = path.join(process.env.LOCALAPPDATA || "", "Packages");
+  const name = `.cloak-probe-${process.pid}`;
+  const probe = path.join(app.getPath("userData"), name);
+  let hidden = null;
+  try {
+    fs.mkdirSync(app.getPath("userData"), { recursive: true });
+    fs.writeFileSync(probe, "");
+    hidden = fs.readdirSync(pkgs).map((p) => path.join(pkgs, p, "LocalCache", "Roaming", path.basename(app.getPath("userData")), name)).find((p) => fs.existsSync(p)) || null;
+  } catch {}
+  try { fs.rmSync(probe, { force: true }); } catch {}
+  if (!hidden) return false;
+  try { fs.rmSync(hidden, { force: true }); } catch {}
+  const bat = path.join(os.tmpdir(), "cloak-relaunch.bat");
+  const args = [app.isPackaged ? "" : `"${app.getAppPath()}"`, "--cloak-relaunched"].filter(Boolean).join(" ");
+  fs.writeFileSync(bat, `@start "" "${process.execPath}" ${args}\r\n`);
+  spawn("explorer.exe", [bat], { detached: true, stdio: "ignore" }).unref();
+  return true;
+}
+if (relaunchedOutsidePackage()) app.exit(0);
+
 // Only one copy runs at a time; starting it again just opens the one that's already running.
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on("second-instance", () => {
@@ -107,7 +132,7 @@ const PANELS = {
   welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
 const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95 };
-const DEFAULT_HOTKEYS = { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S" };
+const DEFAULT_HOTKEYS = { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S", listen: "CommandOrControl+Alt+L" };
 
 const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], showMode: true, position: "center" };
 
@@ -624,6 +649,7 @@ ipcMain.on("notify-action", (_e, id, action) => {
   if (action === "done" && taskId) tasks.update(taskId, { done: true });
   else if (action === "snooze" && taskId) notifyState.snooze(taskId);
   else if (action === "open" && n) openTarget(n.target);
+  else if (action === "copy" && n) clipboard.writeText(n.body || "");
 });
 // Nothing left to show: if the top widget was only shown for notifications, hide it again.
 ipcMain.on("notify-idle", () => {
@@ -1271,8 +1297,16 @@ function makeListener() {
       return added;
     },
     // Listen mode: answers (and important notes) pop up right away, to read out.
-    onImportant: (item) => { if (listener.mode) pushNotification({ kind: "listen", urgent: true, title: item.q ? `Q: ${item.q}` : "Listen", body: item.text, target: { type: "panel", name: "listen" } }); },
+    onImportant: (item) => { if (listener.mode) pushNotification({ kind: "listen", urgent: true, title: item.q ? `Q: ${item.q}` : "Listen", body: item.text, target: { type: "panel", name: "listen" }, actions: [{ id: "copy", label: "Copy" }] }); },
   });
+}
+// Listen mode on or off (keyboard shortcut, tray), with a short notice so you know which.
+function toggleListenMode() {
+  const on = activeMode().id !== "listen";
+  setActiveMode(on ? "listen" : loadConfig().modeBeforeListen || "general");
+  if (on && !listener.installed()) return; // the Listen panel opened to set it up
+  pushNotification({ kind: "mode", title: on ? "Listen mode is on" : "Listen mode is off",
+    body: on ? "Answers to questions it hears will pop up here." : `Back to ${activeMode().name}.`, target: { type: "panel", name: "listen" } });
 }
 ipcMain.handle("listen-status", () => listener.status());
 ipcMain.handle("listen-install", async () => {
@@ -1414,6 +1448,7 @@ function registerHotkeys(keys) {
   };
   reg("toggle", toggleAll);
   reg("capture", () => widget.webContents.send("trigger-capture"));
+  reg("listen", toggleListenMode);
   return failed;
 }
 
@@ -1426,6 +1461,7 @@ function buildTray() {
     { label: "Notes", click: () => togglePanel("notes") },
     { label: "Listen", click: () => togglePanel("listen") },
     { label: "Mode", submenu: modeMenuItems() },
+    { label: `Listen mode    ${prettyKey(cfg.hotkeys.listen)}`, type: "checkbox", checked: activeMode().id === "listen", click: toggleListenMode },
     { label: "Settings", click: () => openSettings() },
     { label: "Setup guide", click: () => openWelcome() },
     { type: "separator" },
@@ -1438,6 +1474,7 @@ function buildTray() {
     { label: "Reset \"always allow\" choices", enabled: cfg.autoAllow.length > 0, click: () => { saveConfig({ autoAllow: [] }); buildTray(); } },
     { label: "Reset widget positions", click: () => { saveConfig({ panelBounds: {} }); for (const n of Object.keys(panels)) panels[n].setBounds(defaultBounds(n)); } },
     { type: "separator" },
+    { label: "Restart Cloak", click: () => { app.relaunch(); app.quit(); } },
     { label: "Quit", click: () => app.quit() },
   ]));
 }

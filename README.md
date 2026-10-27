@@ -67,9 +67,10 @@ You can also run `npm install` and then `npm start`.
 |---|---|
 | `Ctrl+Shift+Space` | Show or hide everything (chat bar and your widgets) |
 | `Ctrl+Shift+S` | Take a screenshot and ask about it |
+| `Ctrl+Alt+L` | Turn Listen mode on or off |
 | Right-click the top widget | Open Settings |
 
-You can change both shortcuts in **Settings, Keyboard**.
+You can change these shortcuts in **Settings, Keyboard**. In the chat, the Up arrow brings back your last message.
 
 If `claude` isn't on your PATH, set `CLAUDE_CLI_PATH` to its full path. With the subscription option, the app removes `ANTHROPIC_API_KEY` and similar variables before running Claude, so you're never billed by accident. With the API key option, your key is stored encrypted on your PC (Windows data protection) and is only passed to Claude Code.
 
