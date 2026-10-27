@@ -1,6 +1,8 @@
 // Welcome / setup guide: about you, connecting Claude (subscription or API key), a starting mode, and a tour.
 const $ = (id) => document.getElementById(id);
 const ov = window.overlay;
+const IS_MAC = ov.platform === "darwin";
+if (IS_MAC) $("installHelp").innerHTML = "This opens a Terminal window and runs Anthropic's official installer. Or run it yourself: <code>curl -fsSL https://claude.ai/install.sh | bash</code>";
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const STEPS = ["welcome", "about", "connect", "mode", "tour", "done"];
 let step = 0;
@@ -76,7 +78,7 @@ async function checkInstall() {
 }
 $("installBtn").onclick = () => {
   ov.installClaude();
-  $("installStatus").textContent = "The installer is running in a PowerShell window. When it says Done, click Check again.";
+  $("installStatus").textContent = `The installer is running in a ${IS_MAC ? "Terminal" : "PowerShell"} window. When it says Done, click Check again.`;
 };
 $("recheckBtn").onclick = checkInstall;
 
@@ -144,7 +146,8 @@ async function renderDone() {
 // ---------- start ----------
 (async () => {
   const st = await ov.getSettings();
-  const pretty = (a) => a.replace(/CommandOrControl/g, "Ctrl").replace(/Super/g, "Win");
+  const pretty = (a) => IS_MAC ? a.replace(/CommandOrControl|Super/g, "Cmd").replace(/Control/g, "Ctrl").replace(/Alt/g, "Option")
+    : a.replace(/CommandOrControl/g, "Ctrl").replace(/Super/g, "Win");
   $("kToggle").textContent = $("kToggle2").textContent = pretty(st.hotkeys.toggle);
   $("kCapture").textContent = pretty(st.hotkeys.capture);
   chosenMode = st.activeMode || "general";

@@ -1,10 +1,19 @@
-// Listen panel: captures the computer's sound (Windows loopback, not the microphone), cuts it into short clips
+// Listen panel: captures the computer's sound (Windows loopback, not the microphone; on a Mac, a virtual sound
+// device such as BlackHole that the sound is routed through), cuts it into short clips
 // at pauses, and sends them to be transcribed (lib/listen.js). Shows the transcript and the AI's responses.
 const $ = (id) => document.getElementById(id);
 const ov = window.overlay;
 const body = document.body;
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+const IS_MAC = ov.platform === "darwin";
+const IDLE_TEXT = IS_MAC ? "On a Mac it listens through BlackHole, a free sound driver (see the Mac part of the README)."
+  : "Listens to your computer's sound, not your microphone.";
+const MAC_NO_DEVICE = "a Mac can't share its sound with Cloak directly. Install BlackHole 2ch (free, from existential.audio/blackhole), " +
+  "then in Audio MIDI Setup make a Multi-Output Device with your speakers and BlackHole, choose it as the sound output, and press Start listening again.";
+const MAC_NO_ACCESS = "Cloak isn't allowed to use sound input. In System Settings > Privacy & Security > Microphone, turn on Terminal " +
+  "(or Electron), then quit and start Cloak again.";
 
 let st = null;      // status from main
 let capture = null; // { stream, ctx, stop() }
@@ -21,7 +30,7 @@ function render() {
     : st.status === "loading" ? st.detail || "Starting the speech engine…"
     : st.listening && st.mode ? "Listen mode: answers pop up as questions are asked."
     : st.listening ? "Listening to your computer's sound…"
-    : st.detail || "Listens to your computer's sound, not your microphone.";
+    : st.detail || IDLE_TEXT;
   $("sub").textContent = st.listening ? "on" : "";
   if (st.status === "installing" || (!st.installed && st.status === "error")) $("setupStatus").textContent = st.detail;
 }
@@ -78,10 +87,7 @@ ov.onListenFeed((item) => { st.feed.push(item); addCard(item); });
 const RATE = 16000;
 async function startCapture() {
   if (capture) return;
-  // The system-audio grant comes from main (loopback); the screen video it insists on is dropped right away.
-  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-  stream.getVideoTracks().forEach((t) => t.stop());
-  if (!stream.getAudioTracks().length) throw new Error("Windows didn't share the computer's sound.");
+  const stream = IS_MAC ? await macSoundStream() : await windowsSoundStream();
   const ctx = new AudioContext();
   const src = ctx.createMediaStreamSource(stream);
   const proc = ctx.createScriptProcessor(4096, 1, 1);
@@ -102,6 +108,24 @@ async function startCapture() {
     feed(out);
   };
   capture = { stream, ctx, stop() { proc.onaudioprocess = null; stream.getTracks().forEach((t) => t.stop()); ctx.close().catch(() => {}); } };
+}
+// The system-audio grant comes from main (loopback); the screen video it insists on is dropped right away.
+async function windowsSoundStream() {
+  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+  stream.getVideoTracks().forEach((t) => t.stop());
+  if (!stream.getAudioTracks().length) throw new Error("Windows didn't share the computer's sound.");
+  return stream;
+}
+// macOS: Electron 33 can't capture the system's sound, so record from a virtual device the sound is routed into.
+// Device names stay hidden until sound-input access is granted, hence the throwaway request first.
+async function macSoundStream() {
+  try {
+    (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
+  } catch (e) { throw new Error(e.name === "NotAllowedError" ? MAC_NO_ACCESS : e.message); }
+  const dev = (await navigator.mediaDevices.enumerateDevices()).find((d) => d.kind === "audioinput" && /blackhole|loopback|soundflower/i.test(d.label));
+  if (!dev) throw new Error(MAC_NO_DEVICE);
+  // Raw sound: the voice-call clean-up (echo cancelling etc.) would mangle music and lectures.
+  return navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: dev.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
 }
 function stopCapture() { capture?.stop(); capture = null; meter(0); }
 

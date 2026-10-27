@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 const on = (ch) => (cb) => ipcRenderer.on(ch, (_e, data) => cb(data));
 
 contextBridge.exposeInMainWorld("overlay", {
+  platform: process.platform, // "darwin" on a Mac: a few labels and shortcut keys differ
   // main widget
   setMode: (m, size) => ipcRenderer.send("set-mode", m, size),
   focus: () => ipcRenderer.send("focus"),

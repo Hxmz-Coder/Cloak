@@ -397,7 +397,13 @@ $("allowList").addEventListener("click", async (e) => {
 
 // ---------- keyboard ----------
 let listening = null;
-const pretty = (a) => a.replace(/CommandOrControl/g, "Ctrl").replace(/Super/g, "Win");
+const IS_MAC = ov.platform === "darwin";
+const pretty = (a) => IS_MAC ? a.replace(/CommandOrControl|Super/g, "Cmd").replace(/Control/g, "Ctrl").replace(/Alt/g, "Option")
+  : a.replace(/CommandOrControl/g, "Ctrl").replace(/Super/g, "Win");
+if (IS_MAC) {
+  $("keysLead").textContent = "Click a shortcut, then press the new key combination. It must include Cmd, Control or Option.";
+  $("loginLabel").textContent = "Start when I log in to my Mac";
+}
 function renderKeys() {
   document.querySelectorAll(".key").forEach((b) => {
     b.classList.toggle("listening", listening === b.dataset.k);
@@ -421,8 +427,10 @@ document.addEventListener("keydown", async (e) => {
   if (e.key === "Escape") { listening = null; renderKeys(); return; }
   const key = keyName(e);
   if (!key) return; // still holding modifiers
-  if (!e.ctrlKey && !e.altKey && !e.metaKey) { $("keyStatus").innerHTML = '<span class="err">Include Ctrl, Alt or the Windows key.</span>'; return; }
-  const accel = [e.ctrlKey && "CommandOrControl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", key].filter(Boolean).join("+");
+  if (!e.ctrlKey && !e.altKey && !e.metaKey) { $("keyStatus").innerHTML = `<span class="err">${IS_MAC ? "Include Cmd, Control or Option." : "Include Ctrl, Alt or the Windows key."}</span>`; return; }
+  // CommandOrControl is Ctrl on Windows and Cmd on a Mac, so on a Mac it comes from the Cmd key and Ctrl is "Control".
+  const accel = (IS_MAC ? [e.metaKey && "CommandOrControl", e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift", key]
+    : [e.ctrlKey && "CommandOrControl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Super", key]).filter(Boolean).join("+");
   const which = listening;
   listening = null;
   const r = await ov.setHotkey(which, accel);
@@ -434,7 +442,7 @@ document.addEventListener("keydown", async (e) => {
 // ---------- general ----------
 $("openAtLogin").onchange = async () => {
   await ov.setSetting("openAtLogin", $("openAtLogin").checked);
-  $("openAtLogin").checked = (await ov.getSettings()).openAtLogin; // show what Windows actually has
+  $("openAtLogin").checked = (await ov.getSettings()).openAtLogin; // show what the system actually has
 };
 
 // ---------- modes ----------

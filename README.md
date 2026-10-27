@@ -32,7 +32,7 @@ It runs Claude through the [Claude Code](https://code.claude.com) CLI, using eit
 
 ## Requirements
 
-- Windows 10 or 11
+- Windows 10 or 11, or a Mac with macOS 13 or later ([early, see On a Mac](#on-a-mac-early))
 - [Node.js](https://nodejs.org) 18 or later
 - A paid Claude plan (Pro or Max) **or** an Anthropic API key. The Claude Free plan doesn't include Claude Code.
 - Claude Code. The setup guide installs it for you, or you can install it yourself:
@@ -74,6 +74,53 @@ You can change these shortcuts in **Settings, Keyboard**. In the chat, the Up ar
 
 If `claude` isn't on your PATH, set `CLAUDE_CLI_PATH` to its full path. With the subscription option, the app removes `ANTHROPIC_API_KEY` and similar variables before running Claude, so you're never billed by accident. With the API key option, your key is stored encrypted on your PC (Windows data protection) and is only passed to Claude Code.
 
+## On a Mac (early)
+
+Cloak was made on Windows. The Mac version is new and hasn't been tried much yet, so tell the person who sent it to you what works and what doesn't. [MAC-TESTING.md](MAC-TESTING.md) is a checklist of what to try.
+
+**What you need:** macOS 13 (Ventura) or later, and a Claude Pro or Max plan (or an Anthropic API key).
+
+**Set it up (about 10 minutes the first time):**
+
+1. Install [Node.js](https://nodejs.org): download the **LTS** version for macOS, open it and click through the installer.
+2. Go to [github.com/Hxmz-Coder/Cloak](https://github.com/Hxmz-Coder/Cloak), click **Code**, then **Download ZIP**. Open your Downloads folder and double-click the ZIP to unzip it. You can move the folder anywhere you like (for example into Documents).
+3. In the folder, double-click **start.command**.
+   - If your Mac says it "cannot be opened because it is from an unidentified developer" or "Apple could not verify" it: click **Done** (or OK), open **System Settings, Privacy & Security**, scroll down, and click **Open Anyway** next to start.command. (On older macOS you can instead right-click start.command, choose **Open**, then **Open**.)
+   - A Terminal window opens. The first time, it downloads what Cloak needs, which takes a minute or two.
+4. Cloak appears as a small pill at the top of your screen, and a round icon in the menu bar (top right). There's no Dock icon. The setup guide opens: click **Install Claude Code** (a Terminal window runs Anthropic's installer), then **Sign in** and follow the steps.
+
+After that, double-click `start.command` whenever you want Cloak, or turn on **Settings, General, Start when I log in to my Mac**.
+
+**Permissions macOS asks for.** Cloak works without them, but some features need them. Change them any time in **System Settings, Privacy & Security**. If you started Cloak with `start.command` they're listed under **Electron**; with `npm start` from Terminal, under **Terminal**. After turning one on, quit Cloak (menu bar icon, Quit) and start it again.
+
+| Permission | What needs it |
+|---|---|
+| **Screen Recording** (on newer macOS, *Screen & System Audio Recording*) | Screenshots (`Cmd+Shift+S`, *Explain my screen*) and screen memory. Without it, Cloak only sees your wallpaper. |
+| **Accessibility** | Screen memory's window titles (which tab or document you were in). Without it, it only records the app's name. |
+| **Automation, System Events** | Screen memory asks once to see which app is in front. Click **OK**. |
+| **Microphone** | Listen (see below). Cloak never records your microphone; this is how macOS lets it hear BlackHole. |
+
+**Listen on a Mac** needs one extra free tool, because the Electron version Cloak uses can't hear a Mac's sound by itself:
+
+1. Install [BlackHole 2ch](https://existential.audio/blackhole/) (free; it's a virtual sound cable).
+2. Open **Audio MIDI Setup** (in Applications, Utilities). Click **+** at the bottom left, choose **Create Multi-Output Device**, and tick both your speakers (or headphones) and **BlackHole 2ch**.
+3. In **System Settings, Sound, Output**, choose that **Multi-Output Device**. You still hear everything, and Cloak hears it too. (Switch back to your speakers when you don't need Listen. macOS can't change the volume of a Multi-Output Device, so set the volume first.)
+4. In Cloak, open Listen and press **Start listening**. Allow the microphone prompt.
+
+**Keyboard shortcuts on a Mac:** `Cmd+Shift+Space` shows or hides everything and `Cmd+Shift+S` asks about your screen. You can change them in **Settings, Keyboard**.
+
+**Your data** lives in `~/Library/Application Support/cloak` (in Finder: Go, Go to Folder, and paste that).
+
+**Something went wrong?** Quit Cloak, open Terminal, and run it from there so you can see what it says:
+
+```bash
+cd ~/Downloads/Cloak-main    # or wherever the folder is: type "cd ", drag the folder into Terminal, press Return
+npm install
+npm start
+```
+
+Copy what Terminal prints and send it along with a screenshot.
+
 ## FAQ
 
 **Can it see my claude.ai or Claude app chats?** No. Cloak signs in with your Claude account through Claude Code, but Claude Code can't read your claude.ai conversations, and no app can. Cloak keeps its own conversation, which is still there after a restart, and gives Claude your tasks, the time, and (when you ask) your screen and recent activity.
@@ -100,6 +147,7 @@ Claude-built widgets live in `%APPDATA%\cloak\widgets\<id>\`. `source.json` hold
 | `lib/claude.js` | Runs the `claude` CLI and turns its errors into clear messages |
 | `lib/permissions.js` | What runs without asking, and the approval cards |
 | `lib/memory.js` | Screen memory (window history and screenshots) |
+| `lib/terminal.js`, `lib/platform.js` | Opening a terminal for installers and sign-in (PowerShell or Terminal.app), and finding programs on a Mac |
 | `lib/codex.js` | ChatGPT through the Codex CLI: one-off runs, the chat, sign-in status and approval requests |
 | `lib/tasks.js` | The task list |
 | `lib/memories.js` | What you've asked the AI to remember |
