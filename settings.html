@@ -2,7 +2,7 @@
 <html data-opaque>
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
 <title>Claude Settings</title>
 <link rel="stylesheet" href="theme.css" />
 <link rel="stylesheet" href="panel.css" />
@@ -72,6 +72,13 @@
   .file-sum { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .item:hover .file-sum { -webkit-line-clamp: unset; }
   .file-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; background: rgba(var(--accent-rgb), .14); color: var(--accent); font-size: 9.5px; font-weight: 700; }
+  .logo-demo { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--panel); margin-bottom: 6px; }
+  .logo-demo .logo { width: 26px; height: 26px; }
+  .logo-demo[data-icon="classic"] .logo { border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); font-weight: 700; font-size: 13px; color: var(--on-accent); }
+  .logo-demo[data-icon="classic"] .logo::before, .logo-demo[data-icon="custom"] .logo::before { content: none; }
+  .logo-demo[data-icon="custom"] .logo { border-radius: 50%; background: var(--icon-image, var(--panel-hi)) center / cover no-repeat; }
+  .logo-demo:not([data-icon]) .logo { border-radius: 0; background: none; }
+  .logo-demo:not([data-icon]) .logo::before { content: ""; }
   .mem-text { outline: 0; border-radius: 6px; padding: 1px 4px; margin-left: -4px; cursor: text; user-select: text; }
   .mem-text:focus { background: rgba(255,255,255,.06); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), .5); }
   .item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 6px; }
@@ -131,18 +138,27 @@
       <section id="s-appearance">
         <h2>Appearance</h2>
         <p class="lead">Changes apply to every widget right away.</p>
-        <h3>Accent color</h3>
+        <h3 data-premium="colors">Accent color</h3>
         <div class="swatches" id="swatches"></div>
+        <h3 data-premium="colors">Background color</h3>
+        <div class="swatches" id="bgSwatches"></div>
         <h3>Background opacity</h3>
         <div class="row"><input type="range" id="opacity" min="50" max="100" step="1" /><span id="opacityVal" class="muted" style="width:44px;text-align:right"></span></div>
         <div class="preview">
-          <div class="pp"><div class="logo">✳</div><b>Claude</b></div>
+          <div class="pp"><div class="logo">✳</div><b>Cloak</b></div>
           <div class="card">
             <span class="chip"><i></i>Explain my screen</span><span class="chip"><i></i>Answer this</span>
             <button class="btn primary">Allow</button><button class="btn">Decline</button>
           </div>
         </div>
-        <div class="btns" style="margin-top:14px"><button class="btn ghost" id="themeReset">Reset to Claude orange</button></div>
+        <h3>Icon</h3>
+        <div class="styles" id="iconPick">
+          <button data-v="cloak"><span class="logo-demo"><span class="logo"></span></span>Cloak</button>
+          <button data-v="classic"><span class="logo-demo" data-icon="classic"><span class="logo">✳</span></span>Classic</button>
+          <button data-v="custom"><span class="logo-demo" id="customDemo" data-icon="custom"><span class="logo"></span></span><span id="customLabel">Your picture</span></button>
+        </div>
+        <p class="hint" style="margin:6px 0 0">Shown on the top widget and in the chat bar. The Cloak icon takes your accent color.</p>
+        <div class="btns" style="margin-top:14px"><button class="btn ghost" id="themeReset">Reset colors</button></div>
       </section>
 
       <!-- Top widget -->
@@ -192,7 +208,7 @@
 
       <!-- Memory -->
       <section id="s-memory">
-        <h2>Memory</h2>
+        <h2 data-premium="memory">Memory</h2>
         <p class="lead">Things the AI remembers about you and uses in every chat and Listen response. Add them here, or just tell it in the chat, for example "remember that my exam is on Friday". It stays on this PC.</p>
         <div class="builder">
           <textarea id="memText" placeholder="Something to remember, e.g. I'm in 11th grade and take AP Biology. (One per line to add several.)"></textarea>
@@ -261,6 +277,11 @@
         <div class="row"><div class="grow"><div class="t">Screen memory</div><div class="d">Notes which app you're in and keeps screenshots from the last ~30 minutes, for "What did I just do?" and finding tasks.</div></div><label class="switch"><input type="checkbox" id="memoryEnabled"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">Chat speed</div><div class="d">Fast answers instantly; Smart thinks harder on tough questions. Replies stream in either way.</div></div>
           <div class="seg" id="chatSpeed"><button data-v="fast">Fast</button><button data-v="balanced">Balanced</button><button data-v="smart">Smart</button></div></div>
+        <div class="row"><div class="grow"><div class="t">Answer length</div><div class="d">Short keeps chat answers to a few lines, for quick help. For a long discussion, use Continue in Claude under any answer.</div></div>
+          <div class="seg" id="replyLength"><button data-v="short">Short</button><button data-v="normal">Normal</button><button data-v="detailed">Detailed</button></div></div>
+        <div class="row"><div class="grow"><div class="t">On-task checks</div><div class="d">In Homework mode, or while a Pomodoro focus session runs, Cloak takes a screenshot every few minutes and asks Claude if you're on task, and nudges you if you're not. Each screenshot is deleted right after.</div></div><label class="switch"><input type="checkbox" id="focusOn"><span></span></label></div>
+        <div class="row" id="focusEveryRow"><div class="grow"><div class="t">Check every</div></div>
+          <div class="seg" id="focusEvery"><button data-v="2">2 min</button><button data-v="3">3 min</button><button data-v="5">5 min</button><button data-v="10">10 min</button></div></div>
         <div class="row"><div class="grow"><div class="t">Find tasks automatically</div><div class="d">Every 40 minutes, looks through recent activity and changed notes for things you need to do. Uses some of your Claude usage.</div></div><label class="switch"><input type="checkbox" id="autoScan"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">Turn my notes into tasks</div><div class="d">A few seconds after you stop typing in Notes, Claude adds any new to-dos to your Tasks. Your notes never change.</div></div><label class="switch"><input type="checkbox" id="notesSync"><span></span></label></div>
         <div class="row"><div class="grow"><div class="t">Clear screen memory</div><div class="d">Deletes the saved activity and screenshots now.</div></div><button class="btn" id="clearMem">Clear</button></div>
@@ -283,6 +304,7 @@
       <section id="s-general">
         <h2>General</h2>
         <div class="row"><div class="grow"><div class="t" id="loginLabel">Start when I sign in to Windows</div></div><label class="switch"><input type="checkbox" id="openAtLogin"><span></span></label></div>
+        <div class="row"><div class="grow"><div class="t">Open Cloak like any app</div><div class="d" id="launcherDesc"></div></div><button class="btn" id="launcherBtn"></button></div>
         <h3>AI</h3>
         <div class="row"><div class="grow"><div class="t">Which AI Cloak uses</div><div class="d">Everything works the same with either. Switching starts a new chat.</div></div>
           <div class="seg" id="aiPick"><button data-v="claude">Claude</button><button data-v="chatgpt">ChatGPT</button></div></div>

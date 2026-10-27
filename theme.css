@@ -1,7 +1,8 @@
 /* Shared look for all Claude widgets. */
 :root {
   --bg-alpha: 0.95;
-  --bg: rgba(22, 20, 19, var(--bg-alpha));
+  --bg-rgb: 22, 20, 19;
+  --bg: rgba(var(--bg-rgb), var(--bg-alpha));
   --panel: rgba(255, 255, 255, 0.05);
   --panel-hi: rgba(255, 255, 255, 0.09);
   --border: rgba(255, 255, 255, 0.09);
@@ -28,11 +29,22 @@ button { font: inherit; color: inherit; }
   /* Small enough to fit inside the window margin; a bigger one gets clipped into a visible box. */
   box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
 }
+/* The app's mark (Settings > Appearance > Icon): the Cloak logo in your accent color (default), the classic
+   star, or your own picture. */
 .logo {
-  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  display: grid; place-items: center; font-weight: 700; font-size: 13px; color: var(--on-accent);
+  width: 24px; height: 24px; flex-shrink: 0; position: relative;
+  display: grid; place-items: center; font-size: 0; color: transparent;
 }
+.logo::before {
+  content: ""; position: absolute; inset: 0; background: var(--accent);
+  -webkit-mask: url("assets/cloak-mask.png") center / contain no-repeat; mask: url("assets/cloak-mask.png") center / contain no-repeat;
+}
+html[data-icon="classic"] .logo {
+  border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  font-weight: 700; font-size: 13px; color: var(--on-accent);
+}
+html[data-icon="classic"] .logo::before, html[data-icon="custom"] .logo::before { content: none; }
+html[data-icon="custom"] .logo { border-radius: 50%; background: var(--icon-image) center / cover no-repeat; }
 .icon-btn {
   display: grid; place-items: center; width: 28px; height: 28px; padding: 0; flex-shrink: 0;
   background: transparent; border: 0; border-radius: 8px; color: var(--muted); cursor: pointer;

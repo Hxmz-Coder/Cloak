@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("overlay", {
     syncNow: () => call("notes.syncNow"),
     onSync: (cb) => ipcRenderer.on("notes-sync", (_e, s) => cb(s)),
   },
+  focus: (on) => call("focus", !!on), // a focus session (e.g. a Pomodoro) is running: lets Cloak's on-task checks run
   pill: {
     setStatus: (text) => call("pill.setStatus", text),
     notify: (text, minutes) => call("pill.notify", text, minutes),

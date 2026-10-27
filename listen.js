@@ -129,25 +129,61 @@ async function macSoundStream() {
 }
 function stopCapture() { capture?.stop(); capture = null; meter(0); }
 
+// ---------- Talk mode: the microphone ----------
+// Your voice, cut into what you said at each pause, sent to the chat (main turns it into text). While Claude's reply
+// is read aloud, the microphone is ignored, so it doesn't answer itself.
+let mic = null, speaking = false;
+const micClips = makeSegmenter((pcm) => { if (!speaking) ov.talkHeard(pcm).catch(() => {}); }, { pause: 0.8, max: 20 });
+async function startMic() {
+  if (mic) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+  const ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const mute = ctx.createGain(); mute.gain.value = 0;
+  src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+  const step = ctx.sampleRate / RATE;
+  proc.onaudioprocess = (e) => { if (!speaking) micClips(downsample(e.inputBuffer.getChannelData(0), step)); };
+  mic = { stop() { proc.onaudioprocess = null; stream.getTracks().forEach((t) => t.stop()); ctx.close().catch(() => {}); } };
+}
+function stopMic() { mic?.stop(); mic = null; }
+ov.onTalkCapture(async (on) => {
+  if (!on) return stopMic();
+  try { await startMic(); }
+  catch (e) { $("status").textContent = `Talk mode couldn't use the microphone: ${e.message}`; $("status").classList.add("err"); }
+});
+ov.onTalkSpeaking((on) => { speaking = on; });
+
 // 16 kHz sound in, clips out. "Speech" is anything clearly above the background level, so it works whatever the
 // volume. A clip ends at a short pause after some speech (so a question is answered as soon as it's finished), or
-// after 8 seconds; stretches with no speech are dropped.
-let chunks = [], len = 0, voiced = 0, quiet = 0, floor = 0.002;
-function feed(out) {
-  let sum = 0;
-  for (let i = 0; i < out.length; i++) sum += out[i] * out[i];
-  const rms = Math.sqrt(sum / (out.length || 1));
-  meter(rms);
-  floor = rms < floor ? floor * 0.9 + rms * 0.1 : floor * 0.995 + rms * 0.005; // follows the quiet parts
-  const speaking = rms > Math.max(0.0015, floor * 2.5);
-  chunks.push(out); len += out.length;
-  if (speaking) { voiced += out.length; quiet = 0; } else quiet += out.length;
-  const pauseAfterSpeech = voiced > 1 * RATE && quiet > 0.5 * RATE;
-  if (pauseAfterSpeech || len > 8 * RATE) {
-    if (voiced > 0.4 * RATE) send(normalize(join(chunks, len)));
-    chunks = []; len = 0; voiced = 0; quiet = 0;
-  } else if (len > 6 * RATE && voiced < 0.2 * RATE) { chunks = []; len = 0; voiced = 0; quiet = 0; }
+// after max seconds; stretches with no speech are dropped.
+function makeSegmenter(onClip, { pause = 0.5, max = 8, showLevel = false } = {}) {
+  let chunks = [], len = 0, voiced = 0, quiet = 0, floor = 0.002;
+  return (out) => {
+    let sum = 0;
+    for (let i = 0; i < out.length; i++) sum += out[i] * out[i];
+    const rms = Math.sqrt(sum / (out.length || 1));
+    if (showLevel) meter(rms);
+    floor = rms < floor ? floor * 0.9 + rms * 0.1 : floor * 0.995 + rms * 0.005; // follows the quiet parts
+    const talking = rms > Math.max(0.0015, floor * 2.5);
+    chunks.push(out); len += out.length;
+    if (talking) { voiced += out.length; quiet = 0; } else quiet += out.length;
+    if ((voiced > 1 * RATE && quiet > pause * RATE) || len > max * RATE) {
+      if (voiced > 0.4 * RATE) onClip(normalize(join(chunks, len)));
+      chunks = []; len = 0; voiced = 0; quiet = 0;
+    } else if (len > 6 * RATE && voiced < 0.2 * RATE) { chunks = []; len = 0; voiced = 0; quiet = 0; }
+  };
 }
+const feed = makeSegmenter((pcm) => send(pcm), { showLevel: true }); // the computer's sound, for Listen
+const downsample = (input, step) => {
+  const out = new Float32Array(Math.floor(input.length / step));
+  for (let i = 0; i < out.length; i++) {
+    let acc = 0, n = 0;
+    for (let j = Math.floor(i * step); j < Math.floor((i + 1) * step); j++) { acc += input[j]; n++; }
+    out[i] = acc / (n || 1);
+  }
+  return out;
+};
 // Quiet audio is boosted so the speech engine hears it clearly.
 function normalize(a) {
   let peak = 0;

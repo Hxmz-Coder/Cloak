@@ -33,6 +33,14 @@ function renderAppearance() {
   $("swatches").innerHTML = COLORS.map(([name, hex]) =>
     `<button class="sw ${hex === cur ? "on" : ""}" title="${name}" data-hex="${hex}" style="background:${hex}"></button>`).join("") +
     `<span class="custom-color">Custom <input type="color" id="customColor" value="${esc(S.theme.accent)}"></span>`;
+  const bg = (S.theme.background || "#161413").toLowerCase();
+  $("bgSwatches").innerHTML = BACKGROUNDS.map(([name, hex]) =>
+    `<button class="sw ${hex === bg ? "on" : ""}" title="${name}" data-hex="${hex}" style="background:${hex};box-shadow:inset 0 0 0 1px rgba(255,255,255,.15)"></button>`).join("") +
+    `<span class="custom-color">Custom <input type="color" id="customBg" value="${esc(bg)}"></span>`;
+  const icon = S.theme.icon === "custom" && S.theme.iconData ? "custom" : S.theme.icon || "cloak";
+  document.querySelectorAll("#iconPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === icon));
+  $("customLabel").textContent = S.theme.iconData ? "Your picture" : "Choose picture…";
+  if (S.theme.iconData) $("customDemo").style.setProperty("--icon-image", `url("${S.theme.iconData}")`);
   $("opacity").value = Math.round(S.theme.opacity * 100);
   $("opacityVal").textContent = `${Math.round(S.theme.opacity * 100)}%`;
 }
@@ -49,7 +57,26 @@ $("opacity").addEventListener("input", () => {
   clearTimeout(opTimer);
   opTimer = setTimeout(() => ov.setTheme({ opacity: $("opacity").value / 100 }).then((t) => (S.theme = t)), 60);
 });
-$("themeReset").onclick = () => setTheme({ accent: "#d97757", opacity: 0.95 });
+$("themeReset").onclick = () => setTheme({ accent: "#d97757", background: "#161413", opacity: 0.95 });
+// Background color: dark tones that keep text readable (any color via Custom).
+const BACKGROUNDS = [["Charcoal", "#161413"], ["Black", "#050505"], ["Slate", "#141821"], ["Navy", "#0f1630"], ["Forest", "#0f1d16"],
+  ["Plum", "#1e1224"], ["Wine", "#24100f"], ["Mocha", "#241a14"]];
+$("bgSwatches").addEventListener("click", (e) => { if (e.target.dataset.hex) setTheme({ background: e.target.dataset.hex }); });
+$("bgSwatches").addEventListener("input", (e) => { if (e.target.id === "customBg") ov.setTheme({ background: e.target.value }); });
+$("bgSwatches").addEventListener("change", (e) => { if (e.target.id === "customBg") setTheme({ background: e.target.value }); });
+// Icon: the Cloak mark, the classic star, or a picture of your own (double-click it to choose another).
+$("iconPick").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.v === "custom" && !S.theme.iconData) return pickPicture();
+  setTheme({ icon: b.dataset.v });
+});
+$("iconPick").addEventListener("dblclick", (e) => { if (e.target.closest('[data-v="custom"]')) pickPicture(); });
+async function pickPicture() {
+  const t = await ov.pickIcon();
+  if (t?.error) { $("customLabel").textContent = t.error; return; }
+  if (t) { S.theme = t; renderAppearance(); }
+}
 
 // ---------- top widget ----------
 function renderTop() {
@@ -367,6 +394,10 @@ function renderClaude() {
   $("memoryEnabled").checked = S.memoryEnabled;
   $("autoScan").checked = S.autoScan;
   document.querySelectorAll("#chatSpeed button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.chatSpeed));
+  document.querySelectorAll("#replyLength button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.replyLength));
+  $("focusOn").checked = S.focusChecks.enabled;
+  $("focusEveryRow").style.opacity = S.focusChecks.enabled ? "" : ".45";
+  document.querySelectorAll("#focusEvery button").forEach((b) => b.classList.toggle("on", Number(b.dataset.v) === S.focusChecks.everyMin));
   $("allowList").innerHTML = S.autoAllow.length
     ? S.autoAllow.map((r, i) => `<div class="item"><div class="grow"><code>${esc(describeRule(r))}</code></div><button class="icon-btn" data-i="${i}" title="Ask me again">${ICON.del}</button></div>`).join("")
     : '<p class="hint">None yet. Claude asks before running commands that change things, editing files, or opening web pages.</p>';
@@ -384,6 +415,19 @@ $("chatSpeed").addEventListener("click", async (e) => {
   if (!e.target.dataset.v) return;
   await ov.setSetting("chatSpeed", e.target.dataset.v);
   S.chatSpeed = e.target.dataset.v;
+  renderClaude();
+});
+async function saveFocus(patch) {
+  await ov.setSetting("focusChecks", patch);
+  S.focusChecks = { ...S.focusChecks, ...patch };
+  renderClaude();
+}
+$("focusOn").onchange = () => saveFocus({ enabled: $("focusOn").checked });
+$("focusEvery").addEventListener("click", (e) => { if (e.target.dataset.v) saveFocus({ everyMin: Number(e.target.dataset.v) }); });
+$("replyLength").addEventListener("click", async (e) => {
+  if (!e.target.dataset.v) return;
+  await ov.setSetting("replyLength", e.target.dataset.v);
+  S.replyLength = e.target.dataset.v;
   renderClaude();
 });
 $("clearMem").onclick = async () => { await ov.clearMemory(); $("clearMem").textContent = "Cleared"; };
@@ -559,6 +603,17 @@ function renderAuth() {
   $("authDesc").textContent = !a.claudeInstalled ? "Claude Code isn't installed yet. Open the setup guide to install it."
     : a.mode === "apiKey" ? `Using your API key ${a.keyHint || ""}. You pay Anthropic per use.` : "Using your Claude account's sign-in in Claude Code.";
 }
+// Where Cloak can be opened from (it adds itself there on start).
+function renderLauncher(l) {
+  const mac = l.where === "applications";
+  $("launcherDesc").textContent = !l.ok ? "Cloak adds itself the next time it starts."
+    : mac ? "Cloak is in your Applications folder: search for Cloak in Spotlight (Cmd+Space) or find it in Launchpad."
+    : `Cloak is in the Start menu: press the Windows key and type Cloak.${l.desktop ? " There's also a shortcut on your desktop." : ""}`;
+  $("launcherBtn").textContent = mac ? "Show in Finder" : l.desktop ? "On your desktop" : "Add to desktop";
+  $("launcherBtn").disabled = !mac && l.desktop;
+  $("launcherBtn").style.display = l.where ? "" : "none";
+}
+$("launcherBtn").onclick = async () => renderLauncher(await ov.launcherDesktop());
 $("authChange").onclick = () => ov.openWelcome("connect");
 $("aiPick").addEventListener("click", async (e) => {
   const v = e.target.dataset.v;
@@ -583,6 +638,12 @@ async function refresh() {
   syncShortcutMode();
   renderAppearance(); renderTop(); renderNotify(); renderMemory(await ov.listMemories()); renderFiles(await ov.listMemoryFiles()); renderModes(); renderShortcuts(); renderWidgets(); renderClaude(); renderKeys(); renderAuth();
   $("openAtLogin").checked = S.openAtLogin;
+  renderLauncher(await ov.launcherStatus());
+  // Cloak Premium (lib/premium.js): nothing is marked until it launches.
+  document.querySelectorAll("[data-premium]").forEach((el) => {
+    el.querySelector(".premium-tag")?.remove();
+    if (S.premium?.locked.includes(el.dataset.premium)) el.insertAdjacentHTML("beforeend", ' <span class="tag premium-tag">Premium</span>');
+  });
   $("notesSync").checked = S.notesSync;
   $("pShowMode").checked = S.pill.showMode !== false;
   $("version").textContent = `Cloak ${S.version}`;

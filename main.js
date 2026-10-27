@@ -1,9 +1,9 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, clipboard, protocol, session, net, safeStorage, shell, dialog } = require("electron");
+const { app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, screen, Tray, Menu, nativeImage, clipboard, protocol, session, net, safeStorage, shell, dialog, powerMonitor } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { pathToFileURL } = require("url");
-const { runClaude, friendlyError, findClaude, setAuth } = require("./lib/claude");
+const { runClaude, friendlyError, findClaude, setAuth, cliEnv } = require("./lib/claude");
 const { spawn, execFileSync } = require("child_process");
 const { ChatSession } = require("./lib/chat");
 const { TOOLS, AUTO_ALLOWED, describeDenial } = require("./lib/permissions");
@@ -11,6 +11,10 @@ const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
 const { MemoryStore, extractMemoryBlocks } = require("./lib/memories");
 const { Listener } = require("./lib/listen");
+const launcher = require("./lib/launcher");
+const { FocusChecker, FOCUS_DEFAULTS } = require("./lib/focus");
+const premium = require("./lib/premium");
+const hasPremium = (feature) => premium.unlocked(feature, loadConfig()); // everything, until Premium launches
 const { WidgetStore, BUILD_SCHEMA, buildPrompt, checkJs } = require("./lib/widgets");
 const { GENERAL_SHORTCUTS, modePrompt, normalizeModes, defaultModeFor, MODE_SCHEMA, modeBuildPrompt } = require("./lib/modes");
 const { DEFAULT_NOTIFY, NotifyState, taskNotifications } = require("./lib/notify");
@@ -107,8 +111,17 @@ function systemPrompt() {
     .replace("open one with the Read tool when you need more than the summary", "read the file at that path when you need more than the summary");
 }
 // Claude Code gets the instructions as a file argument; Codex reads AGENTS.md from its working folder.
+// How long chat answers are (Settings > Claude & privacy > Answer length). It goes last, so it wins over a mode's
+// instructions (Homework's step-by-step explanations stay, just compact). Cloak is for quick help; a long
+// discussion belongs in a full Claude chat.
+const REPLY_LENGTH = {
+  short: `\n\nAnswer length (most important): keep every reply short. Lead with the answer, in 1-3 sentences or at most 4 short bullets, roughly 80 words or fewer. No preamble, no restating the question, no closing summary, no offers of more help. Code and commands can be as long as they need to be, with one line of explanation. If something truly needs a long explanation, give the short version and end with: "Want more depth? Click Continue in Claude."`,
+  normal: `\n\nAnswer length: keep replies concise, usually under 150 words. No preamble or closing summary.`,
+  detailed: "",
+};
+const replyLengthRule = () => REPLY_LENGTH[loadConfig().replyLength] ?? REPLY_LENGTH.short;
 function writeInstructions() {
-  const text = systemPrompt() + modePrompt(activeMode());
+  const text = systemPrompt() + modePrompt(activeMode()) + replyLengthRule();
   fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), text);
   fs.writeFileSync(path.join(workDir(), "AGENTS.md"), text);
 }
@@ -135,7 +148,7 @@ const PANELS = {
   settings: { file: "settings.html", size: [800, 600], min: [800, 600], label: "Settings", standalone: true, fixed: true },
   welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
-const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95 };
+const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95, background: "#161413", icon: "cloak", iconData: null };
 const DEFAULT_HOTKEYS = { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S", listen: "CommandOrControl+Alt+L" };
 
 const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], showMode: true, position: "center" };
@@ -235,7 +248,7 @@ function placeWidget(mode, size) {
 function makeWindow(file, size) {
   const win = new BrowserWindow({
     width: size[0], height: size[1], frame: false, transparent: true, resizable: false, // no native resize edge; panels resize from their own grip
-    alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false,
+    alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false, minimizable: false,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, autoplayPolicy: "no-user-gesture-required" }, // notification chime
   });
   win.setAlwaysOnTop(true, "screen-saver");
@@ -249,7 +262,7 @@ function makeWindow(file, size) {
 function makeWidgetWindow(id, size) {
   const win = new BrowserWindow({
     width: size[0], height: size[1], frame: false, transparent: true, resizable: false, // no native resize edge; panels resize from their own grip
-    alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false,
+    alwaysOnTop: true, skipTaskbar: true, hasShadow: false, show: false, minimizable: false,
     webPreferences: { preload: path.join(__dirname, "widget-preload.js"), contextIsolation: true, sandbox: true, partition: "persist:widgets" },
   });
   win.setAlwaysOnTop(true, "screen-saver");
@@ -281,6 +294,7 @@ function setupWidgetSession() {
 
 function showWidget(focus) {
   if (loadConfig().mainHidden) saveConfig({ mainHidden: false });
+  if (widget.isMinimized()) widget.restore();
   if (focus) { widget.show(); widget.focus(); } else widget.showInactive();
 }
 function focusWidget() { showWidget(true); }
@@ -337,9 +351,26 @@ function createPanel(name) {
     widgetIdBySender.delete(wcId);
     if (panels[name] === win) { delete panels[name]; notifyPanels(); }
   });
+  // Its page died (Windows can end hidden windows' processes while the PC sleeps): such a window still "opens" but
+  // shows nothing. Throw it away; the next click builds a fresh one (Listen comes back right away if it was on).
+  win.webContents.on("render-process-gone", (_e, d) => {
+    if (d.reason === "clean-exit" || panels[name] !== win) return;
+    destroyPanel(name);
+    if (name === "listen") { createPanel("listen"); syncListenToMode(); }
+  });
   panels[name] = win;
   return win;
 }
+// A window that can still draw: not destroyed, and its page process is alive.
+const usable = (win) => !!win && !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed();
+// The panel's window, rebuilt if it can't draw any more.
+function panelWindow(name) {
+  if (panels[name] && !usable(panels[name])) destroyPanel(name);
+  return panels[name] || createPanel(name);
+}
+// Really on screen. A minimized window (after sleep, or "show desktop") counts as hidden, so a click brings it back
+// instead of "hiding" it.
+const isShowing = (name) => usable(panels[name]) && panels[name].isVisible() && !panels[name].isMinimized();
 function destroyPanel(name) {
   const win = panels[name];
   if (!win) return;
@@ -356,17 +387,32 @@ function notifyPanels() {
 }
 // Panels that Ctrl+Shift+Space brings up: Tasks, Notes and your custom widgets, unless you turned one off.
 const hotkeyPanels = () => Object.keys(panels).filter((n) => !panelSpec(n)?.standalone && loadConfig().panelEnabled[n] !== false);
-const anyPanelVisible = () => Object.keys(panels).some((n) => !panelSpec(n)?.standalone && panels[n].isVisible());
+const anyPanelVisible = () => Object.keys(panels).some((n) => !panelSpec(n)?.standalone && isShowing(n));
 function showPanel(name, focus) {
-  const w = panels[name] || createPanel(name);
+  const w = panelWindow(name);
   if (!w) return;
+  if (w.isMinimized()) w.restore();
   w.setBounds(savedBounds(name));
   if (focus) { w.show(); w.focus(); } else w.showInactive();
   w.webContents.send("panel-shown");
   notifyPanels();
 }
 function hidePanel(name) { panels[name]?.hide(); notifyPanels(); }
-function togglePanel(name) { panels[name]?.isVisible() ? hidePanel(name) : showPanel(name); }
+function togglePanel(name) { isShowing(name) ? hidePanel(name) : showPanel(name); }
+
+// After the PC wakes up or is unlocked: rebuild any window whose page didn't survive, and have the visible ones
+// repaint (a graphics reset during sleep can leave see-through windows blank). Same for the top widget.
+function recoverWindows() {
+  for (const name of Object.keys(panels)) {
+    if (!usable(panels[name])) { destroyPanel(name); if (name === "listen") { createPanel("listen"); syncListenToMode(); } }
+    else if (panels[name].isVisible()) panels[name].webContents.invalidate();
+  }
+  if (widget && !widget.isDestroyed()) {
+    if (widget.webContents.isCrashed()) widget.reload();
+    else widget.webContents.invalidate();
+  }
+  notifyPanels();
+}
 
 // Ctrl+Shift+Space: bring everything up (including anything you minimized), or put it all away.
 function toggleAll() {
@@ -412,6 +458,33 @@ async function captureScreen() {
   }
 }
 
+// A screenshot for on-task checks: taken as-is, without hiding Cloak first (no flicker while you work).
+async function quietScreenshot() {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const scale = Math.min(1, 1280 / Math.max(display.size.width, display.size.height));
+  const sources = await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: Math.round(display.size.width * scale), height: Math.round(display.size.height * scale) } });
+  const src = sources.find((s) => s.display_id === String(display.id)) || sources[0];
+  return src && !src.thumbnail.isEmpty() ? src.thumbnail.toPNG() : null;
+}
+// On-task checks (lib/focus.js): in Homework mode, or while a Pomodoro focus session runs.
+let focus;
+function makeFocusChecker() {
+  return new FocusChecker({
+    config: () => ({ ...FOCUS_DEFAULTS, ...loadConfig().focusChecks }),
+    why: (pomodoro) => {
+      const homework = activeMode().id === "homework";
+      if (!homework && !pomodoro) return null;
+      const next = tasks.open().filter((t) => t.due).sort((a, b) => (a.due + (a.time || "")).localeCompare(b.due + (b.time || "")))[0] || tasks.open()[0];
+      return (homework ? "they're in Homework mode, doing schoolwork" : "they started a Pomodoro focus session") +
+        (homework && pomodoro ? ", in a Pomodoro focus session" : "") + (next ? `; their next task is "${next.title}"` : "");
+    },
+    screenshot: quietScreenshot,
+    dir: workDir(),
+    runAI: (opts) => runAI({ persist: false, ...opts, ...(provider() === "claude" ? {} : { model: null }) }),
+    notify: (n) => pushNotification({ ...n, target: { type: "tasks" } }),
+  });
+}
+
 function clearChatScreenshots() {
   fs.rmSync(chatShotsDir(), { recursive: true, force: true });
   fs.mkdirSync(chatShotsDir(), { recursive: true });
@@ -435,6 +508,7 @@ function chatOptions() {
     ...(CHAT_SPEEDS[cfg.chatSpeed] || CHAT_SPEEDS.balanced),
     mode: activeMode().id + ":" + activeMode().instructions, // a mode change restarts the chat with the new instructions
     auth: authSignature(),                                    // so does switching between subscription and API key
+    length: loadConfig().replyLength || "short",              // and changing the answer length
   };
 }
 
@@ -455,7 +529,7 @@ function saveHistory(messages) {
 
 // display: what to show as your message in the chat (null for follow-ups like approvals).
 async function chatTurn(prompt, { display = null, image = false, extraAllowed = [] } = {}) {
-  const remembered = memories.context();
+  const remembered = hasPremium("memory") ? memories.context() : "";
   const heard = listenContext(5);
   const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}` +
     (remembered ? `\nThings the user asked you to remember:\n${remembered}` : "") +
@@ -488,7 +562,7 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
   let text = json.result || "";
   if (json.subtype === "error_max_turns") text += "\n\n_(Stopped after too many steps. Say \"continue\" to keep going.)_";
   const { text: noMemory, facts } = extractMemoryBlocks(text);
-  const learned = facts.length ? memories.add(facts, "claude") : [];
+  const learned = facts.length && hasPremium("memory") ? memories.add(facts, "claude") : [];
   const { text: cleaned, items } = extractTaskBlocks(noMemory);
   const added = items.length ? tasks.add(items, "claude") : []; // the reply says so (and the answer notification, if you're away)
 
@@ -617,6 +691,7 @@ function pushNotification(n) {
   shownNotes.set(id, { ...n, id });
   if (shownNotes.size > 50) shownNotes.delete(shownNotes.keys().next().value);
   // The top widget is hidden: show it just for the notification (it hides again afterwards).
+  if (widget.isMinimized()) widget.restore();
   if (!widget.isVisible()) { shownForNotify = true; widget.showInactive(); }
   const { target, ...shown } = n;
   widget.webContents.send("notify", { ...shown, id, sound: cfg.sound, time: Date.now() });
@@ -815,7 +890,25 @@ ipcMain.handle("build-mode", async (_e, request) => {
 // ---------- settings ----------
 ipcMain.on("open-settings", (_e, section) => openSettings(section));
 ipcMain.handle("get-theme", () => loadConfig().theme);
+ipcMain.handle("launcher-status", () => launcher.status());
+ipcMain.handle("launcher-desktop", () => launcher.addDesktopShortcut());
+// Settings > Appearance > Icon > Choose picture: shrunk to 128 px and kept in the theme, so every window can show it.
+ipcMain.handle("pick-icon", async () => {
+  const r = await dialog.showOpenDialog(panels.settings, { title: "Choose a picture for Cloak's icon", properties: ["openFile"],
+    filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "ico"] }] });
+  if (r.canceled || !r.filePaths[0]) return null;
+  const img = nativeImage.createFromPath(r.filePaths[0]);
+  if (img.isEmpty()) return { error: "Cloak couldn't read that picture. Try a PNG or JPG." };
+  const { width, height } = img.getSize();
+  const side = Math.min(width, height); // a centered square, so it fits the round icon
+  const square = img.crop({ x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), width: side, height: side }).resize({ width: 128, height: 128, quality: "best" });
+  const t = { ...DEFAULT_THEME, ...loadConfig().theme, icon: "custom", iconData: square.toDataURL() };
+  saveConfig({ theme: t });
+  broadcast("theme", t);
+  return t;
+});
 ipcMain.handle("set-theme", (_e, theme) => {
+  if (!hasPremium("colors")) { delete theme.accent; delete theme.background; } // the opacity slider is always free
   const t = { ...DEFAULT_THEME, ...loadConfig().theme, ...theme };
   saveConfig({ theme: t });
   broadcast("theme", t);
@@ -825,8 +918,9 @@ ipcMain.handle("get-settings", () => {
   const cfg = loadConfig();
   return {
     theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys, modes: getModes(), activeMode: activeMode().id,
-    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", auth: authStatus(),
+    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", replyLength: cfg.replyLength || "short", focusChecks: { ...FOCUS_DEFAULTS, ...cfg.focusChecks }, auth: authStatus(),
     openAtLogin: getOpenAtLogin(), notify: notifyCfg(),
+    premium: { launched: premium.LAUNCHED, locked: Object.keys(premium.FEATURES).filter((f) => !hasPremium(f)) },
     panels: panelList(), building, version: app.getVersion(),
   };
 });
@@ -835,6 +929,9 @@ ipcMain.handle("set-setting", (_e, key, value) => {
   if (key === "memoryEnabled" || key === "autoScan" || key === "notesSync") saveConfig({ [key]: !!value });
   else if (key === "autoAllow" && Array.isArray(value)) { saveConfig({ autoAllow: value.map(String) }); chat.warm(); }
   else if (key === "chatSpeed" && CHAT_SPEEDS[value]) { saveConfig({ chatSpeed: value }); chat.warm(); }
+  else if (key === "focusChecks" && value && typeof value === "object") saveConfig({ focusChecks: { ...FOCUS_DEFAULTS, ...loadConfig().focusChecks,
+    ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}), ...([2, 3, 5, 10].includes(value.everyMin) ? { everyMin: value.everyMin } : {}) } });
+  else if (key === "replyLength" && value in REPLY_LENGTH) { saveConfig({ replyLength: value }); writeInstructions(); chat.warm(); }
   else if (key === "openAtLogin") setOpenAtLogin(!!value);
   else return false;
   buildTray();
@@ -939,7 +1036,7 @@ function panelList() {
   const list = ["tasks", "notes", "listen"].map((name) => ({ name, label: PANELS[name].label, builtin: true, editable: EDITABLE_BUILTINS.has(name),
     customized: isCustomized(name), canUndo: isCustomized(name) && widgets.canUndo(name), active: name === "listen" && !!listener?.listening }));
   for (const m of widgets.list().filter((w) => !PANELS[w.id])) list.push({ name: m.id, label: m.name, description: m.description, builtin: false, canUndo: widgets.canUndo(m.id), updated: m.updated });
-  return list.map((p) => ({ ...p, enabled: cfg.panelEnabled[p.name] !== false, visible: !!panels[p.name]?.isVisible() }));
+  return list.map((p) => ({ ...p, enabled: cfg.panelEnabled[p.name] !== false, visible: isShowing(p.name) }));
 }
 ipcMain.handle("panel-enabled", (_e, name, on) => {
   saveConfig({ panelEnabled: { ...loadConfig().panelEnabled, [name]: !!on } });
@@ -1047,23 +1144,34 @@ function openTerminal(script) {
 // One line of a bash script that prints text, optionally in a color (36 cyan, 32 green).
 const macSay = (text, color) => `printf '${color ? `\\033[${color}m` : ""}%s\\033[0m\\n' ${shQuote(text)}; `;
 ipcMain.on("install-claude", () => openTerminal(IS_MAC
-  ? macSay("Installing Claude Code (official installer from claude.ai)...", 36) +
+  ? macSay("Installing Claude Code, Anthropic's official app that Cloak uses. This takes about a minute...", 36) +
     "curl -fsSL https://claude.ai/install.sh | bash; echo; " +
-    macSay("Done. Go back to Cloak and click Check again. You can close this window.", 32)
-  : "Write-Host 'Installing Claude Code (official installer from claude.ai)...' -ForegroundColor Cyan; " +
+    macSay("Done! Go back to Cloak: it notices by itself. You can close this window.", 32)
+  : "Write-Host 'Installing Claude Code, Anthropic''s official app that Cloak uses. This takes about a minute...' -ForegroundColor Cyan; " +
     "irm https://claude.ai/install.ps1 | iex; Write-Host ''; " +
-    "Write-Host 'Done. Go back to Cloak and click Check again. You can close this window.' -ForegroundColor Green"));
+    "Write-Host 'Done! Go back to Cloak: it notices by itself. You can close this window.' -ForegroundColor Green"));
+// Signing in goes straight to the browser (`claude auth login`): no chat window, nothing to type.
 ipcMain.on("open-claude-login", () => {
   const exe = findClaude();
   if (!exe) return;
-  const steps = ["  1. Type /login and press Enter", "  2. Choose your Claude account (Pro or Max), not Anthropic Console",
-    "  3. Finish in your browser, then type /exit and go back to Cloak"];
+  const lines = ["Signing in to Claude.", "Your browser opens: sign in to your Claude account and click Authorize.",
+    "If the browser shows a code instead, copy it, paste it here and press Enter.", "When it says you're signed in, go back to Cloak: it notices by itself."];
   openTerminal(IS_MAC
-    ? macSay("Sign in to Claude:", 36) + steps.map((s) => macSay(s)).join("") + "echo; " + shQuote(exe)
-    : "Write-Host 'Sign in to Claude:' -ForegroundColor Cyan; " +
-      steps.map((s) => `Write-Host '${s}'; `).join("") + "Write-Host ''; " +
-      `& '${exe.replace(/'/g, "''")}'`);
+    ? macSay(lines[0], 36) + lines.slice(1).map((s) => macSay(s)).join("") + "echo; " + `${shQuote(exe)} auth login --claudeai; echo; ` + macSay("You can close this window.", 32)
+    : `Write-Host '${lines[0]}' -ForegroundColor Cyan; ` + lines.slice(1).map((s) => `Write-Host '${s.replace(/'/g, "''")}'; `).join("") + "Write-Host ''; " +
+      `& '${exe.replace(/'/g, "''")}' auth login --claudeai; Write-Host ''; Write-Host 'You can close this window.' -ForegroundColor Green`, { env: cliEnv() });
 });
+// Signed in with a Claude subscription? `claude auth status` answers without using any of your Claude usage.
+ipcMain.handle("claude-signin-status", () => new Promise((resolve) => {
+  const exe = findClaude();
+  if (!exe) return resolve({ installed: false, loggedIn: false });
+  const cmd = /\.(cmd|bat)$/i.test(exe);
+  require("child_process").execFile(exe, ["auth", "status", "--json"], { timeout: 15_000, windowsHide: true, shell: cmd, env: cliEnv() }, (err, out) => {
+    let s = {};
+    try { s = JSON.parse(String(out).slice(String(out).indexOf("{"))); } catch {}
+    resolve({ installed: true, loggedIn: !!s.loggedIn, method: s.authMethod || null, email: s.email || null });
+  });
+}));
 // Only a few known pages can be opened from the setup screens.
 ipcMain.on("open-external", (_e, url) => {
   if (/^https:\/\/(console\.anthropic\.com|claude\.ai|claude\.com|code\.claude\.com|nodejs\.org|github\.com\/Hxmz-Coder|chatgpt\.com|learn\.chatgpt\.com)\//.test(String(url))) shell.openExternal(url);
@@ -1229,6 +1337,7 @@ ipcMain.handle("widget-api", async (e, name, ...args) => {
       widget?.webContents.send("widget-status", { id, text });
       return true;
     }
+    case "focus": focus?.session(id, !!args[0]); return true; // a focus session (the Pomodoro) started or stopped
     case "pill.notify": {
       // Something happening right now (e.g. "Now: Dentist"): a notification, at most once a minute per widget.
       // (The pill itself only ever shows what you chose in Settings.)
@@ -1315,15 +1424,21 @@ ipcMain.handle("scan-tasks", (_e, sources) => scanTasks(sources));
 // Only Listen mode pops the answers up as notifications; the widget keeps them in its Responses list.
 function syncListenToMode() {
   if (!listener || !panels.listen) return;
+  const wc = panels.listen.webContents;
+  const toPanel = (ch, data) => (wc.isLoading() ? wc.once("did-finish-load", () => wc.send(ch, data)) : wc.send(ch, data));
   listener.mode = activeMode().id === "listen";
-  if (listener.mode || listener.manual) {
-    if (!listener.installed()) { listener.manual = false; showPanel("listen", true); return; } // shows "Set up Listen"
+  const talk = activeMode().id === "talk" && premium.unlocked("talk", loadConfig());
+  if ((listener.mode || listener.manual || talk) && !listener.installed()) { listener.manual = false; showPanel("listen", true); return; } // "Set up Listen"
+  if ((listener.mode || listener.manual) && premium.unlocked("listen", loadConfig())) {
     if (!listener.listening) listener.start();
     else listener.setState(listener.state.status, listener.state.detail); // tells the panel the mode changed
-    const wc = panels.listen.webContents;
-    if (wc.isLoading()) wc.once("did-finish-load", () => wc.send("listen-capture", true));
-    else wc.send("listen-capture", true);
-  } else if (listener.listening) listener.stop();
+    toPanel("listen-capture", true);
+  } else if (listener.listening) listener.stop(talk);
+  // Talk mode: the panel listens to the microphone; the speech engine runs for it.
+  if (talk && !listener.engine) listener.startEngine();
+  if (!talk && !listener.listening && listener.engine) listener.stop();
+  toPanel("talk-capture", talk);
+  widget?.webContents.send("talk-mode", talk);
 }
 // What's been playing on the computer lately, for the chat's context while Listen is on.
 const listenContext = (minutes) => (listener?.listening ? listener.recent(minutes, 3000) : "");
@@ -1336,7 +1451,7 @@ function makeListener() {
       ...(readFiles && provider() === "claude" && memories.files.some((f) => f.status === "ready") ? { tools: "Read", allowedTools: ["Read"], addDirs: [memories.filesDir] } : {}),
       ...opts }),
     aiError: (t) => aiError(t),
-    memories: () => memories.context(),
+    memories: () => (hasPremium("memory") ? memories.context() : ""),
     today: () => todayLine(),
     addTasks: (items) => {
       const added = tasks.add(items, "claude");
@@ -1357,6 +1472,24 @@ function toggleListenMode() {
     body: on ? "Answers to questions it hears will pop up here." : `Back to ${activeMode().name}.`, target: { type: "panel", name: "listen" } });
 }
 ipcMain.handle("listen-status", () => listener.status());
+// Talk mode: something you said (16 kHz mono from the microphone). Turned into text, then sent to the chat like a
+// typed message; the reply is read aloud by the top widget.
+let talkBusy = false, talkTimer = null;
+ipcMain.handle("talk-heard", async (e, pcm) => {
+  if (activeMode().id !== "talk" || talkBusy) return { skipped: true };
+  const r = await listener.transcribe(pcm instanceof Float32Array ? pcm : new Float32Array(pcm || []), { keep: false });
+  const text = (r.text || "").trim();
+  if (r.error || text.split(/\s+/).length < 2) return { text, skipped: true }; // a cough, a single "um"
+  talkBusy = true;
+  clearTimeout(talkTimer);
+  talkTimer = setTimeout(() => { talkBusy = false; }, 120_000); // in case the chat bar never says it's done
+  showWidget(false);
+  widget.webContents.send("talk-utterance", text);
+  return { text };
+});
+ipcMain.on("talk-done", () => { talkBusy = false; });
+// While the reply is being read aloud, the microphone is ignored (so Talk doesn't hear itself).
+ipcMain.on("talk-speaking", (_e, on) => panels.listen?.webContents.send("talk-speaking", !!on));
 ipcMain.handle("listen-install", async () => {
   const r = await listener.install();
   if (r.ok) syncListenToMode(); // set up from the Listen mode: start listening now
@@ -1543,11 +1676,14 @@ function trayIcon() {
 app.whenReady().then(() => {
   if (IS_MAC) app.dock?.hide(); // like the Windows version: no taskbar/Dock icon, just the pill and the menu bar icon
   try { syncLoginItem(); } catch {}
+  // Start menu shortcut (Windows) / ~/Applications/Cloak.app (Mac), so Cloak opens like any app. Not for test profiles.
+  if (!process.env.CLOAK_DATA_DIR) { try { launcher.installLauncher(); } catch {} }
   fs.mkdirSync(workDir(), { recursive: true });
   writeInstructions();
   clearChatScreenshots();
 
   tasks = new TaskStore(path.join(userData(), "tasks.json"), (list) => broadcast("tasks-changed", list));
+  focus = makeFocusChecker();
   memories = new MemoryStore(path.join(userData(), "memories.json"), (list, files) => { broadcast("memories-changed", list); broadcast("memory-files-changed", files); });
   for (const f of memories.files) if (f.status === "pending") summarizeMemoryFile(f);
   listener = makeListener();
@@ -1592,6 +1728,11 @@ app.whenReady().then(() => {
   createPanel("listen");
   syncListenToMode(); // Listen mode was on when Cloak closed: keep listening
   for (const m of widgets.list()) if (!PANELS[m.id]) createPanel(m.id); // Claude's Tasks/Notes were created just above
+  powerMonitor.on("resume", () => setTimeout(recoverWindows, 1500));
+  powerMonitor.on("unlock-screen", () => setTimeout(recoverWindows, 500));
+  app.on("child-process-gone", (_e, d) => { if (d.type === "GPU") setTimeout(recoverWindows, 1500); });
+  // The top widget's own page died: load it again.
+  widget.webContents.on("render-process-gone", (_e, d) => { if (d.reason !== "clean-exit") setTimeout(() => !widget.isDestroyed() && widget.reload(), 500); });
 
   const failed = registerHotkeys(loadConfig().hotkeys);
   if (failed.length) registerHotkeys(DEFAULT_HOTKEYS); // a saved shortcut is taken now: fall back to the defaults
@@ -1606,5 +1747,5 @@ app.on("will-quit", () => { globalShortcut.unregisterAll(); memory?.stop(); chat
 // Also clean up when Cloak exits without a normal quit (app.exit, a crash handler, etc.); the screen-memory
 // helper would otherwise keep the process from closing.
 process.on("exit", () => { try { memory?.stop(); chat?.kill(); } catch {} });
-module.exports = { toggleAll, checkTaskNotifications, listen: () => listener }; // for test scripts
+module.exports = { toggleAll, checkTaskNotifications, listen: () => listener, focus: () => focus }; // for test scripts
 app.on("window-all-closed", (e) => e.preventDefault());

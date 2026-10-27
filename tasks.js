@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 const body = document.body;
 
 let tasks = [];
-let showDone = false;
+let showDone = false; // the Done tab is showing (finished tasks, newest first)
 let editingTask = null; // task whose day/time editor is open (kept open across re-renders)
 let focusId = null;      // task a notification pointed at: highlighted for a few seconds
 
@@ -107,20 +107,26 @@ function render() {
   const open = tasks.filter((t) => !t.done).sort((a, b) => when(a).localeCompare(when(b)) || b.created - a.created);
   const done = tasks.filter((t) => t.done);
   $("count").textContent = open.length ? `${open.length} open` : "all clear";
-  if (!open.length && !done.length) {
-    list.insertAdjacentHTML("beforeend", '<div class="empty">No tasks yet. Click + to add one. Claude also adds things it notices you still need to do, from your screen, your notes and Listen.</div>');
+  $("tabOpen").textContent = `To do${open.length ? ` (${open.length})` : ""}`;
+  $("tabDone").textContent = `Done${done.length ? ` (${done.length})` : ""}`;
+  $("tabOpen").classList.toggle("on", !showDone);
+  $("tabDone").classList.toggle("on", showDone);
+  $("clearDone").style.display = showDone && done.length ? "" : "none";
+  if (showDone) {
+    if (!done.length) list.insertAdjacentHTML("beforeend", '<div class="empty">Nothing finished yet. Tick a task off and it shows up here.</div>');
+    done.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).forEach((t) => list.appendChild(row(t)));
+    return;
+  }
+  if (!open.length) {
+    list.insertAdjacentHTML("beforeend", done.length
+      ? '<div class="empty">All clear. Your finished tasks are under Done.</div>'
+      : '<div class="empty">No tasks yet. Click + to add one. Claude also adds things it notices you still need to do, from your screen, your notes and Listen.</div>');
   }
   open.forEach((t) => list.appendChild(row(t)));
-  if (done.length) {
-    const sec = document.createElement("div");
-    sec.className = "section";
-    sec.innerHTML = `<span>${showDone ? "▾" : "▸"} Done (${done.length})</span><button class="clear">Clear</button>`;
-    sec.onclick = (e) => { if (e.target.classList.contains("clear")) return; showDone = !showDone; render(); };
-    sec.querySelector(".clear").onclick = () => window.overlay.clearDone();
-    list.appendChild(sec);
-    if (showDone) done.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).forEach((t) => list.appendChild(row(t)));
-  }
 }
+$("tabOpen").onclick = () => { showDone = false; render(); };
+$("tabDone").onclick = () => { showDone = true; render(); };
+$("clearDone").onclick = () => window.overlay.clearDone();
 
 window.overlay.onTasksChanged((list) => { tasks = list; render(); });
 // A notification was clicked: show that task.

@@ -26,6 +26,11 @@
     // Some windows (Settings, Welcome) are always fully opaque so they stay easy to read.
     const a = document.documentElement.hasAttribute("data-opaque") ? 1 : Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
     root.setProperty("--bg-alpha", String(a));
+    root.setProperty("--bg-rgb", hexToRgb(theme.background || "#161413").join(", "));
+    // The mark: "cloak" (default), "classic" or "custom" (a picture you chose, as a data: URL).
+    const icon = theme.icon === "custom" && theme.iconData ? "custom" : theme.icon === "classic" ? "classic" : "cloak";
+    document.documentElement.dataset.icon = icon;
+    if (icon === "custom") root.setProperty("--icon-image", `url("${theme.iconData}")`);
   }
 
   window.overlay?.getTheme?.().then(apply);

@@ -241,6 +241,7 @@ async function turn(userHtml, call) {
   live = null;
   setBusy(false);
   showReply(el, res);
+  if (res.ok && !res.stopped && res.text) speak(res.text);
   const watching = mode === "chat" && document.hasFocus();
   if (res.ok && !res.stopped) window.overlay.chatFinished({ watching, text: res.text, approvals: res.approvals?.length || 0 });
 }
@@ -255,6 +256,16 @@ function showReply(el, res) {
   copy.textContent = "Copy";
   copy.onclick = () => { window.overlay.writeClipboard(res.text || ""); copy.textContent = "Copied"; };
   meta.appendChild(copy);
+  // Cloak is for quick answers; for a longer discussion, carry this one over to a full Claude chat.
+  const more = document.createElement("button");
+  more.textContent = "Continue in Claude";
+  more.title = "Copies this question and answer, and opens Claude so you can paste them and keep going";
+  more.onclick = () => {
+    window.overlay.writeClipboard(`${lastAsked ? `I asked: ${lastAsked}\n\n` : ""}You answered: ${res.text || ""}\n\nLet's go into more depth.`);
+    window.overlay.openExternal("https://claude.ai/new");
+    more.textContent = "Copied. Paste it into Claude";
+  };
+  meta.appendChild(more);
   if (res.tasksAdded?.length) {
     const t = document.createElement("span");
     t.className = "added";
@@ -305,6 +316,7 @@ async function submit(textOverride, image) {
   const shot = image ?? pendingShot;
   if (!text && !shot) return;
   if (text && !textOverride) lastSent = text;
+  lastAsked = text || "What's on my screen?";
   input.value = ""; setShot(null);
   const userHtml = (shot ? `<img class="shot" src="data:image/png;base64,${shot}" />` : "") + esc(text || "What's on my screen?");
   await turn(userHtml, () => window.overlay.ask({ text, image: shot }));
@@ -329,6 +341,29 @@ async function findTasks() {
 
 window.overlay.onRunPrompt((text) => { openAndFocus("chat"); submit(text); });
 window.overlay.onOpenChat(() => openAndFocus("chat"));
+
+// ---------- Talk mode: what you said comes in as a message, and the reply is read aloud ----------
+let talkOn = false;
+window.overlay.onTalkMode((on) => { talkOn = on; if (!on) speechSynthesis.cancel(); });
+window.overlay.onTalkUtterance(async (text) => {
+  if (busy) return window.overlay.talkDone(); // still answering: don't cut that answer off
+  speechSynthesis.cancel();
+  setMode("chat");
+  await submit(text);
+  window.overlay.talkDone();
+});
+// Markdown and symbols would be read out literally: speak plain text.
+const speakable = (t) => String(t || "").replace(/```[\s\S]*?```/g, " (code in the chat) ").replace(/[*_#`>|]/g, "").replace(/\[(.*?)\]\(.*?\)/g, "$1").replace(/\s+/g, " ").trim();
+function speak(text) {
+  const say = speakable(text);
+  if (!talkOn || !say) return;
+  const u = new SpeechSynthesisUtterance(say); // the system's default voice
+  u.rate = 1.05;
+  window.overlay.talkSpeaking(true);
+  u.onend = u.onerror = () => window.overlay.talkSpeaking(false);
+  speechSynthesis.speak(u);
+}
+
 // Claude or ChatGPT (Settings > General). Switching starts a new chat.
 function setAiName(name) { input.placeholder = `Ask ${name || "Claude"}, or tell it what to do…`; }
 window.overlay.onAiChanged((name) => { setAiName(name); log.innerHTML = ""; });
@@ -429,7 +464,7 @@ async function capture() {
   try { return await window.overlay.capture(); } finally { capturing = false; }
 }
 
-let lastSent = "";
+let lastSent = "", lastAsked = "";
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
   // Up in an empty box: your last message back, to fix or send again.

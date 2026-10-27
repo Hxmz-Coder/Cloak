@@ -79,6 +79,14 @@ contextBridge.exposeInMainWorld("overlay", {
   onListenTranscript: on("listen-transcript"),
   onListenFeed: on("listen-feed"),
   onListenCapture: on("listen-capture"),
+  // Talk mode
+  talkHeard: (pcm) => ipcRenderer.invoke("talk-heard", pcm),
+  talkDone: () => ipcRenderer.send("talk-done"),
+  talkSpeaking: (on) => ipcRenderer.send("talk-speaking", on),
+  onTalkCapture: on("talk-capture"),
+  onTalkSpeaking: on("talk-speaking"),
+  onTalkMode: on("talk-mode"),
+  onTalkUtterance: on("talk-utterance"),
 
   // memory (Settings > Memory)
   listMemories: () => ipcRenderer.invoke("memories-list"),
@@ -117,6 +125,7 @@ contextBridge.exposeInMainWorld("overlay", {
   testAuth: () => ipcRenderer.invoke("auth-test"),
   installClaude: () => ipcRenderer.send("install-claude"),
   openClaudeLogin: () => ipcRenderer.send("open-claude-login"),
+  claudeSignInStatus: () => ipcRenderer.invoke("claude-signin-status"),
   openExternal: (url) => ipcRenderer.send("open-external", url),
   openWelcome: (step) => ipcRenderer.send("open-welcome", step),
   restartApp: () => ipcRenderer.send("restart-app"),
@@ -140,6 +149,9 @@ contextBridge.exposeInMainWorld("overlay", {
   onSettingsSection: on("settings-section"),
   getSettings: () => ipcRenderer.invoke("get-settings"),
   setTheme: (t) => ipcRenderer.invoke("set-theme", t),
+  pickIcon: () => ipcRenderer.invoke("pick-icon"),
+  launcherStatus: () => ipcRenderer.invoke("launcher-status"),
+  launcherDesktop: () => ipcRenderer.invoke("launcher-desktop"),
   setSetting: (key, value) => ipcRenderer.invoke("set-setting", key, value),
   setHotkey: (which, accel) => ipcRenderer.invoke("set-hotkey", which, accel),
   clearMemory: () => ipcRenderer.invoke("clear-memory"),

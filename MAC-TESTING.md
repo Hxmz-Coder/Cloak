@@ -46,6 +46,19 @@ Before you start, write down: your Mac model (Apple silicon M1/M2/... or Intel),
 
 - [ ] Settings, General: switch the AI to ChatGPT, click **Install** (Terminal opens), then **Sign in**. Does a chat with ChatGPT work?
 
+## 7. New in this version
+
+- [ ] After Cloak has started once, press `Cmd+Space` and type **Cloak**. Is there a Cloak app with the orange hooded logo? Quit Cloak (menu bar icon, Quit) and open it from Spotlight: does it start?
+- [ ] Settings, General, **Open Cloak like any app**: does it say Cloak is in your Applications folder? Does **Show in Finder** show it?
+- [ ] The pill and the menu bar icon show the Cloak logo (not the old star). Settings, Appearance, **Icon**: switch to Classic, then pick a picture of your own. Does the pill change each time?
+- [ ] Settings, Appearance, **Background color**: pick Navy. Do the pill and Settings turn dark blue?
+- [ ] Setup guide (Settings, General, Setup guide, then Next to **Connect Claude**): if you're already signed in, is step 2 ticked off by itself? (To try a fresh sign-in, run `claude auth logout` in Terminal first, click **Sign in**, finish in the browser, and watch it tick off without clicking anything else.)
+- [ ] Ask the chat "Explain how photosynthesis works." Is the answer a few lines, not paragraphs? Is there a **Continue in Claude** button?
+- [ ] Switch to **Homework** mode, open YouTube for 4 minutes. Did macOS ask for Screen Recording (if not already allowed)? Did a "Back to it?" notification appear?
+- [ ] Switch to **Talk** mode. Did macOS ask for the microphone? Say "What's the capital of Japan?" and pause. Does your question appear in the chat, and does Cloak say the answer out loud?
+- [ ] Tasks: is there a **Done** tab with your finished tasks?
+- [ ] Put the Mac to sleep for a few minutes, wake it, and click a widget's button. Does it open with its content?
+
 ## What to send back
 
 - This list with your notes.

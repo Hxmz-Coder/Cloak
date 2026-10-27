@@ -2,7 +2,7 @@
 <html data-opaque>
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
 <title>Claude Welcome</title>
 <link rel="stylesheet" href="theme.css" />
 <link rel="stylesheet" href="panel.css" />
@@ -18,6 +18,13 @@
   h2 { font-size: 15px; margin: 18px 0 6px; font-weight: 600; }
   p { color: var(--muted); margin: 6px 0; line-height: 1.55; }
   .hero { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+  .need { font-size: 12.5px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin: 0 0 12px; }
+  .need a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  ol.how { margin: 0 0 10px; padding-left: 20px; font-size: 13px; line-height: 1.55; }
+  ol.how li { margin-bottom: 3px; }
+  details { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  details summary { cursor: pointer; color: var(--text); }
+  details p { margin: 6px 0; }
   .hero .logo { width: 46px; height: 46px; font-size: 22px; }
   .bul { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
   .bul li { display: flex; gap: 10px; align-items: flex-start; color: var(--text); }
@@ -58,7 +65,7 @@
 <body data-fixed>
 <div class="shell">
   <div class="phead" title="Drag to move">
-    <div class="badge">✳</div>
+    <div class="logo" style="width:22px;height:22px">✳</div>
     <div class="title">Welcome to Cloak</div>
     <button class="icon-btn min" title="Close (you can reopen this from Settings > General)">
       <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
@@ -98,7 +105,8 @@
     <!-- 3. Connect Claude -->
     <section class="page" data-step="connect">
       <h1>Connect Claude</h1>
-      <p>Cloak runs Claude through Claude Code, Anthropic's official app. Choose how you'd like to use it.</p>
+      <p>Cloak runs Claude through Claude Code, Anthropic's official app. Two quick steps, about 3 minutes.</p>
+      <div class="need"><b>You'll need:</b> a Claude <b>Pro or Max</b> plan (the free plan doesn't include Claude Code; <a id="plansLink">see plans</a>), or an Anthropic API key.</div>
       <div class="cards" id="methods">
         <button class="card" data-v="subscription"><span class="rec">RECOMMENDED</span><b>Claude Pro or Max</b><span>Use your Claude subscription. No extra cost and nothing to manage.</span></button>
         <button class="card" data-v="apiKey"><b>Anthropic API key</b><span>Pay Anthropic per use with a key from the Claude Console. Good if you don't have Pro or Max.</span></button>
@@ -112,15 +120,25 @@
             <button class="btn primary" id="installBtn">Install Claude Code</button>
             <button class="btn" id="recheckBtn">Check again</button>
           </div>
-          <p id="installHelp" style="display:none;font-size:12px">This opens a PowerShell window and runs Anthropic's official installer. Or run it yourself: <code>irm https://claude.ai/install.ps1 | iex</code></p>
+          <p id="installHelp" style="display:none;font-size:12px"><span id="installWhat">A PowerShell window opens and runs Anthropic's official installer. It takes about a minute, and Cloak ticks this step off by itself when it's done.</span>
+            <details><summary>Nothing happened?</summary>Open <span id="termName">PowerShell</span> yourself, paste this line and press Enter: <code id="installCmd">irm https://claude.ai/install.ps1 | iex</code></details></p>
         </div>
       </div>
 
       <div class="stepbox" id="subBox">
         <div class="head"><div class="num" id="n2">2</div>Sign in with your Claude account</div>
         <div class="body">
-          <p style="margin-top:0">Click <b>Open sign-in</b>. In the window that opens, type <code>/login</code>, choose your <b>Claude account (Pro or Max)</b>, and finish in your browser. Then type <code>/exit</code> and come back here.</p>
-          <div class="row"><button class="btn primary" id="loginBtn">Open sign-in</button><button class="btn" id="testSubBtn">Test connection</button><span class="status" id="subStatus"></span></div>
+          <ol class="how">
+            <li>Click <b>Sign in</b>. Your browser opens on Claude's sign-in page (a small window also opens; leave it be).</li>
+            <li>Sign in with the account that has <b>Pro or Max</b>, then click <b>Authorize</b>.</li>
+            <li>Come back here. Cloak notices by itself and ticks this step off.</li>
+          </ol>
+          <div class="row"><button class="btn primary" id="loginBtn">Sign in</button><span class="status" id="subStatus"></span></div>
+          <details class="trouble"><summary>Having trouble?</summary>
+            <p><b>The browser showed a code:</b> copy it, click into the small window, paste it and press Enter.</p>
+            <p><b>It says you don't have access:</b> that account doesn't have Pro or Max. Upgrade at claude.ai, or use an API key instead (above).</p>
+            <p><b>Still stuck:</b> <button class="btn ghost" id="testSubBtn">Test connection</button> shows exactly what's wrong.</p>
+          </details>
         </div>
       </div>
 

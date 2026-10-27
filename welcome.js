@@ -19,7 +19,7 @@ function go(i) {
   $("backBtn").style.visibility = step === 0 ? "hidden" : "visible";
   $("skipBtn").style.visibility = step === STEPS.length - 1 ? "hidden" : "visible";
   $("nextBtn").textContent = step === 0 ? "Get started" : step === STEPS.length - 1 ? "Start using Cloak" : "Next";
-  if (STEPS[step] === "connect") checkInstall();
+  if (STEPS[step] === "connect") checkInstall().then(checkSignedIn);
   if (STEPS[step] === "mode") renderModes();
   if (STEPS[step] === "done") renderDone();
 }
@@ -78,8 +78,30 @@ async function checkInstall() {
 }
 $("installBtn").onclick = () => {
   ov.installClaude();
-  $("installStatus").textContent = `The installer is running in a ${IS_MAC ? "Terminal" : "PowerShell"} window. When it says Done, click Check again.`;
+  $("installStatus").innerHTML = `<span class="spinner"></span>Installing in the ${IS_MAC ? "Terminal" : "PowerShell"} window that opened. This takes about a minute…`;
+  watchFor(async () => (await ov.authStatus()).claudeInstalled, () => { checkInstall(); checkSignedIn(); });
 };
+// Checks every few seconds (for up to 6 minutes) until a step is done, then calls done().
+let watching = null;
+function watchFor(test, done) {
+  clearInterval(watching);
+  const until = Date.now() + 6 * 60_000;
+  watching = setInterval(async () => {
+    if (Date.now() > until) return clearInterval(watching);
+    if (await test()) { clearInterval(watching); done(); }
+  }, 3000);
+}
+// Already signed in with a Claude subscription? Then step 2 is done (this check costs nothing).
+async function checkSignedIn() {
+  if (method !== "subscription") return false;
+  const s = await ov.claudeSignInStatus();
+  if (!s.loggedIn || s.method !== "claude.ai") return false;
+  connected = true;
+  $("subStatus").className = "status ok";
+  $("subStatus").textContent = `Signed in${s.email ? ` as ${s.email}` : ""}. Claude is ready.`;
+  $("n2").classList.add("ok"); $("n2").textContent = "✓";
+  return true;
+}
 $("recheckBtn").onclick = checkInstall;
 
 $("loginBtn").onclick = async () => {
@@ -88,8 +110,15 @@ $("loginBtn").onclick = async () => {
   await ov.setAuth({ mode: "subscription" });
   ov.openClaudeLogin();
   $("subStatus").className = "status";
-  $("subStatus").textContent = "Finish signing in in the window that opened, then click Test connection.";
+  $("subStatus").innerHTML = '<span class="spinner"></span>Waiting for you to sign in in your browser…';
+  watchFor(checkSignedIn, () => {});
 };
+$("plansLink").onclick = () => ov.openExternal("https://claude.ai/upgrade");
+if (IS_MAC) {
+  $("installWhat").textContent = "A Terminal window opens and runs Anthropic's official installer. It takes about a minute, and Cloak ticks this step off by itself when it's done.";
+  $("termName").textContent = "Terminal";
+  $("installCmd").textContent = "curl -fsSL https://claude.ai/install.sh | bash";
+}
 async function test(statusEl, numEl) {
   statusEl.className = "status";
   statusEl.innerHTML = '<span class="spinner"></span>Testing…';

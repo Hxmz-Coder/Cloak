@@ -50,7 +50,7 @@ app.on("web-contents-created", (_e, wc) => {
   wc.on("render-process-gone", (_ev, d) => errors.push(`${wc.getTitle()}: renderer crashed (${d.reason})`));
 });
 
-const { toggleAll, checkTaskNotifications, listen } = require("../main.js");
+const { toggleAll, checkTaskNotifications, listen, focus } = require("../main.js");
 const { taskNotifications, NotifyState, DEFAULT_NOTIFY } = require("../lib/notify");
 
 // ---------- helpers ----------
@@ -180,6 +180,28 @@ const SCENARIOS = {
     ipcMain.emit("toggle-panel", {}, "tasks"); await wait(1500);
     const t2 = await win("Claude Tasks");
     check("a closed widget reopens when clicked", t2 && !t2.isDestroyed() && t2.isVisible());
+
+    // After sleep, Windows can end a hidden widget's page process: it used to "open" as an invisible empty window.
+    t2.webContents.forcefullyCrashRenderer(); await wait(1200);
+    ipcMain.emit("toggle-panel", {}, "tasks"); await wait(1800);
+    const t3 = await win("Claude Tasks");
+    const alive = t3 ? await js(t3, `return document.querySelectorAll(".task").length >= 0 && "alive"`) : null;
+    check("a widget whose page died (e.g. after sleep) opens fine on the next click", t3 && t3.isVisible() && alive === "alive", alive);
+    ipcMain.emit("toggle-panel", {}, "tasks"); await wait(400);
+    const cal = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().includes("/widget/calendar-"));
+    cal?.webContents.forcefullyCrashRenderer(); await wait(1200);
+    require("electron").powerMonitor.emit("resume"); await wait(2500);
+    ipcMain.emit("toggle-panel", {}, "calendar-mvcx691f"); await wait(1800);
+    const cal2 = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().includes("/widget/calendar-"));
+    const calOk = cal2 ? await js(cal2, `return document.getElementById("app").innerText.length > 0`) : false;
+    check("after the PC wakes up, widgets still open with their content", cal2?.isVisible() && calOk === true, String(calOk));
+    // The built-in Pomodoro tells Cloak while a focus session runs (for on-task checks).
+    ipcMain.emit("toggle-panel", {}, "pomodoro-mvam2qxu"); await wait(1800);
+    const pw = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().includes("/widget/pomodoro-"));
+    const startBtn = pw ? await js(pw, `const b = [...document.querySelectorAll("button")].find((x) => /^Start focus/i.test(x.textContent.trim())); if (!b) return "no start button"; b.click(); return "ok"`) : "no window";
+    await wait(1200);
+    check("starting the Pomodoro tells Cloak a focus session is running", startBtn === "ok" && focus().focusSessionRunning(), startBtn);
+    errors.splice(0, errors.length, ...errors.filter((e) => !/renderer crashed \(crashed\)/.test(e))); // the crashes above were on purpose
   },
 
   // Notifications from the top widget: deadlines, check-ins, answers. No Claude answers needed.
@@ -300,6 +322,41 @@ const SCENARIOS = {
     await call("welcome-done", { profile: { interests: ["school"] }, mode: "homework" });
     await call("tasks-add", { title: "Chemistry lab report", category: "homework", due: iso(2), time: "09:00" });
     await call("tasks-add", { title: "Read chapter 5 of history", category: "homework", due: iso(4) });
+    // On-task checks (Homework mode): with made-up screens, never a real screenshot of this PC.
+    const fakeScreen = async (html) => {
+      const fw = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { offscreen: true } });
+      await fw.loadURL("data:text/html," + encodeURIComponent(html));
+      await wait(300);
+      const img = await fw.webContents.capturePage();
+      fw.destroy();
+      return img.toPNG();
+    };
+    const offTask = await fakeScreen(`<body style="margin:0;font:28px Arial;background:#0f0f0f;color:#fff"><div style="background:#202020;padding:16px">YouTube &nbsp; <span style="background:#121212;padding:6px 200px">Search</span></div><div style="padding:40px">Shorts</div><div style="padding:0 40px"><div style="width:360px;height:420px;background:#e33;display:inline-block"></div> <b>Funniest cat fails of the week #shorts</b><br>12M views</div></body>`);
+    const onTask = await fakeScreen(`<body style="margin:0;font:22px Arial;background:#f1f3f4"><div style="background:#fff;padding:14px;border-bottom:1px solid #ccc">Google Docs &nbsp; <b>Chemistry lab report</b></div><div style="background:#fff;width:800px;margin:30px auto;padding:60px;line-height:1.6"><h2>Lab Report: Titration of Acetic Acid</h2><p>Purpose: to determine the concentration of acetic acid in vinegar by titration with 0.1 M NaOH.</p><p>Procedure: 25.0 mL of vinegar was pipetted into a flask...</p></div></body>`);
+    const f = focus();
+    const realShot = f.hooks.screenshot;
+    let shown = [];
+    const realNotify = f.hooks.notify;
+    f.hooks.notify = (n) => shown.push(n);
+    f.hooks.screenshot = async () => offTask;
+    f.lastCheck = 0; await f.tick();
+    check("on-task check: YouTube during Homework mode gets a nudge", shown.length === 1 && /back|still/i.test(shown[0].title), JSON.stringify(shown));
+    transcript.push({ label: "focus nudge", a: JSON.stringify(shown[0]) });
+    shown = [];
+    f.hooks.screenshot = async () => onTask;
+    f.lastCheck = 0; await f.tick();
+    check("on-task check: a lab report doc gets no nudge", shown.length === 0, JSON.stringify(shown));
+    await call("set-setting", "focusChecks", { enabled: false });
+    f.hooks.screenshot = async () => offTask;
+    f.lastCheck = 0; await f.tick();
+    check("on-task checks can be turned off", shown.length === 0);
+    await call("set-setting", "focusChecks", { enabled: true });
+    f.hooks.screenshot = realShot; f.hooks.notify = realNotify;
+
+    const longQ = await ask("Explain how photosynthesis works.");
+    const words = (longQ.text || "").split(/\s+/).filter(Boolean).length;
+    check(`answers are short by default, even in Homework mode (${words} words)`, longQ.ok && words <= 110, longQ.text || longQ.error);
+    transcript.push({ label: "short answer", a: longQ.text });
     let r = await ask("What is the derivative of x^3 + 2x?");
     check("derivative of x^3 + 2x = 3x^2 + 2", r.ok && has(r.text.replace(/\s/g, ""), /3x(\^2|²)\+2/), r.text || r.error);
     r = await ask("Check my work: 2x + 5 = 17, so 2x = 12, so x = 7.");
@@ -621,6 +678,39 @@ const SCENARIOS = {
     await call("listen-stop");
     await wait(800);
     check("Stop turns Listen mode off and stops capturing", !(await call("listen-status")).listening && (await call("get-modes")).active === "general" && !(await js(lp, `return !!capture`)));
+
+    // Talk mode: you speak, Claude answers out loud. A stand-in microphone (never the real one), and the reply is
+    // caught instead of being played.
+    await js(lp, `navigator.mediaDevices.getUserMedia = async () => { const c = new AudioContext(); return c.createMediaStreamDestination().stream; }; return 1`);
+    await js(w, `window.__spoken = ""; speechSynthesis.speak = (u) => { window.__spoken = u.text; setTimeout(() => u.onend && u.onend(), 50); }; return 1`);
+    await call("set-active-mode", "talk");
+    await wait(1500);
+    check("Talk mode turns the microphone on", await js(lp, `return !!mic`));
+    let voice;
+    if (real) {
+      const wav2 = path.join(profile, "question.wav");
+      require("child_process").execFileSync("powershell.exe", ["-NoProfile", "-Command",
+        `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${wav2}', $f); $s.Speak('What is the capital of Japan?'); $s.Dispose()`], { windowsHide: true });
+      const b2 = fs.readFileSync(wav2);
+      voice = Float32Array.from(new Int16Array(b2.buffer, b2.byteOffset + 44, (b2.length - 44) >> 1), (v) => (v / 32768) * 0.3);
+    } else {
+      voice = new Float32Array(16000 * 2);
+      for (let i = 0; i < voice.length; i++) voice[i] = 0.02 * Math.sin(i / 6);
+    }
+    const before = await js(w, `return document.querySelectorAll("#log .bot").length`);
+    await js(lp, `const pcm = new Float32Array(Uint8Array.from(atob("${Buffer.from(voice.buffer).toString("base64")}"), (c) => c.charCodeAt(0)).buffer);
+      for (let i = 0; i < pcm.length; i += 1365) micClips(pcm.slice(i, i + 1365));
+      for (let i = 0; i < 20; i++) micClips(new Float32Array(1365)); return 1`);
+    let spoken = "";
+    for (let i = 0; i < 60 && !spoken; i++) { await wait(1500); spoken = await js(w, `return window.__spoken`); }
+    const youSaid = await js(w, `return [...document.querySelectorAll("#log .user")].pop()?.textContent || ""`);
+    check("what you say goes to the chat", real ? /japan/i.test(youSaid) : /mitochondria/i.test(youSaid), youSaid);
+    check("the reply is read out loud, as plain speech", (real ? /tokyo/i.test(spoken) : /ATP|energy/i.test(spoken)) && !/[*#`]/.test(spoken) && spoken.length < 400, spoken);
+    transcript.push({ label: "talk", a: `you said: ${youSaid} | spoken reply: ${spoken}` });
+    check("the chat got a new answer", (await js(w, `return document.querySelectorAll("#log .bot").length`)) > before);
+    await call("set-active-mode", "general");
+    await wait(800);
+    check("leaving Talk mode turns the microphone off", !(await js(lp, `return !!mic`)));
 
     ipcMain.emit("open-settings", {}, "memory"); await wait(1500);
     const sw = await win("Claude Settings");

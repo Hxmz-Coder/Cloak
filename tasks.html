@@ -55,6 +55,13 @@
   .acts .icon-btn svg { width: 14px; height: 14px; }
   .task.focus { background: rgba(var(--accent-rgb), .14); box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), .55); transition: background .6s, box-shadow .6s; }
 
+  /* To do / Done */
+  .tabs { display: flex; align-items: center; gap: 2px; padding: 6px 10px 0; }
+  .tabs button { background: none; border: 0; border-radius: 7px; padding: 4px 10px; cursor: pointer; color: var(--muted); font-size: 12px; }
+  .tabs button:hover { color: var(--text); background: var(--panel); }
+  .tabs button.on { color: var(--text); background: var(--panel-hi); }
+  .tabs .clear { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+  .tabs .clear:hover { color: #ff9b8a; }
   .section { display: flex; align-items: center; gap: 8px; padding: 10px 8px 2px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
   .section .clear { margin-left: auto; background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 11.5px; }
   .section .clear:hover { color: var(--accent); }
@@ -95,6 +102,7 @@
       <div class="push"><button class="btn ghost" id="cancelAdd">Cancel</button><button class="btn primary" id="saveAdd">Add</button></div>
     </div>
   </div>
+  <div class="tabs"><button id="tabOpen" class="on">To do</button><button id="tabDone">Done</button><button class="clear" id="clearDone" title="Remove every finished task">Clear all</button></div>
   <div id="list"></div>
   <div class="grip" title="Resize"></div>
 </div>
