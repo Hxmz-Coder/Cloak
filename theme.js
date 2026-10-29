@@ -36,7 +36,7 @@
     const a = document.documentElement.hasAttribute("data-opaque") ? 1 : glass ? (light ? 0.82 : 0.74) : Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
     root.setProperty("--bg-alpha", String(a));
     root.setProperty("--native-scheme", glass && light ? "light" : "dark");
-    root.setProperty("--bg-rgb", (starry ? [6, 17, 40] : glass ? (light ? [214, 234, 252] : [12, 30, 64]) : hexToRgb(theme.background || "#161413")).join(", "));
+    root.setProperty("--bg-rgb", (starry ? [0, 0, 0] : glass ? (light ? [214, 234, 252] : [12, 30, 64]) : hexToRgb(theme.background || "#161413")).join(", "));
     // The mark: "cloak" (default), "classic" or "custom" (a picture you chose, as a data: URL).
     const icon = theme.icon === "custom" && theme.iconData ? "custom" : theme.icon === "classic" ? "classic" : theme.icon === "ring" ? "ring" : "cloak";
     document.documentElement.dataset.icon = icon;
@@ -44,6 +44,54 @@
     root.setProperty("--ring-color", `rgb(${ringColor.join(",")})`);
     root.setProperty("--ring-mark", ringColor.every((c) => c > 240) ? "#d1d5db" : "#ffffff");
     if (icon === "custom") root.setProperty("--icon-image", `url("${theme.iconData}")`);
+    sky(starry);
+  }
+
+  // Starry Night: stars twinkle in random spots and a shooting star crosses now and then. The stars are placed in
+  // percentages, so the sky survives the window changing size; the shooting stars are timed at random.
+  let skyTimer = 0;
+  function sky(on) {
+    const shell = document.querySelector(".shell");
+    const old = shell?.querySelector(".sky-layer");
+    if (!on || !shell) { clearTimeout(skyTimer); old?.remove(); return; }
+    if (old) return;
+    const layer = document.createElement("div");
+    layer.className = "sky-layer";
+    const rand = (a, b) => a + Math.random() * (b - a);
+    const area = Math.max(1, window.innerWidth * window.innerHeight);
+    const count = Math.max(14, Math.min(90, Math.round(area / 3800)));
+    for (let i = 0; i < count; i++) {
+      const star = document.createElement("span");
+      const size = Math.random() < 0.8 ? rand(1, 1.8) : rand(2, 2.8);
+      star.className = "star";
+      star.style.cssText = `left:${rand(0, 100)}%;top:${rand(0, 100)}%;width:${size}px;height:${size}px;--dur:${rand(2.5, 7)}s;--delay:${-rand(0, 7)}s;--peak:${rand(0.55, 1)}`;
+      layer.appendChild(star);
+    }
+    shell.prepend(layer);
+    const shoot = () => {
+      skyTimer = setTimeout(() => {
+        if (!layer.isConnected) return;
+        if (!document.hidden && layer.animate) {
+          const w = layer.clientWidth, h = layer.clientHeight;
+          const s = document.createElement("span");
+          s.className = "shooter";
+          const angle = rand(18, 38), dist = Math.max(w * 0.6, 120) + rand(0, 80);
+          const x0 = rand(w * 0.3, w), y0 = rand(0, h * 0.5);
+          const dx = -Math.cos(angle * Math.PI / 180) * dist, dy = Math.sin(angle * Math.PI / 180) * dist;
+          s.style.cssText = `left:${x0}px;top:${y0}px;transform-origin:100% 50%`;
+          layer.appendChild(s);
+          const rot = `rotate(${180 - angle}deg)`;
+          const run = s.animate([
+            { opacity: 0, transform: `translate(0,0) ${rot}` },
+            { opacity: 1, offset: 0.15 },
+            { opacity: 0, transform: `translate(${dx}px,${dy}px) ${rot}` },
+          ], { duration: rand(650, 1100), easing: "ease-in" });
+          run.onfinish = () => s.remove();
+        }
+        shoot();
+      }, rand(5000, 16000));
+    };
+    shoot();
   }
 
   // The highlight follows the pointer without moving the window or its hit area.

@@ -82,6 +82,10 @@
   #chatArea { flex: 1; min-height: 0; flex-direction: column; border-top: 1px solid var(--border); }
   body:not([data-mode="chat"]) #chatArea { display: none; }
   .logbar { display: flex; align-items: center; padding: 6px 14px 0; font-size: 11.5px; color: var(--faint); flex-shrink: 0; }
+  .usage { margin-left: 10px; font-variant-numeric: tabular-nums; }
+  .usage:empty { display: none; }
+  .usage i { display: inline-block; width: 46px; height: 4px; border-radius: 2px; background: var(--border); vertical-align: middle; margin: 0 6px 1px; overflow: hidden; }
+  .usage i b { display: block; height: 100%; background: var(--accent); }
   .logbar button { margin-left: auto; background: none; border: 0; color: var(--faint); cursor: pointer; font-size: 11.5px; padding: 2px 4px; border-radius: 6px; }
   .logbar button:hover { color: var(--text); background: var(--panel); }
   #log { flex: 1; overflow-y: auto; padding: 0 14px 14px; display: flex; flex-direction: column; user-select: text; }
@@ -226,7 +230,7 @@
   <div class="tiles expanded-only" id="tiles"></div>
 
   <div id="chatArea" class="expanded-only">
-    <div class="logbar"><span>Chat</span><button id="newChat" title="Clear this conversation and start over">New chat</button></div>
+    <div class="logbar"><span>Chat</span><span id="usage" class="usage" title="Context: what the conversation carries into the next reply. Used: tokens spent in this chat."></span><button id="newChat" title="Clear this conversation and start over">New chat</button></div>
     <div id="log"></div>
   </div>
 

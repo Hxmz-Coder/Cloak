@@ -90,37 +90,16 @@ html[data-material="glass"] select option { background: #dce8f4; color: #1d324b;
 html[data-material="glass"][data-tint="dark"] select option { background: #1c293d; color: #f5f8ff; }
 html[data-material="glass"][data-tint="light"] .shell { background: radial-gradient(105px circle at var(--cursor-x, 50%) var(--cursor-y, 5%), rgba(255,255,255,.75), transparent 85%), linear-gradient(125deg, rgba(255,255,255,.44), transparent 52%, rgba(98,158,222,.20)), var(--bg); }
 html[data-material="glass"][data-tint="light"] .logo::before { background: var(--accent); }
-html[data-sky="starry"] .shell {
-  isolation: isolate;
-  background: radial-gradient(ellipse at 48% 105%, rgba(39, 91, 164, .45), transparent 67%),
-    radial-gradient(ellipse at 15% 74%, rgba(79, 57, 139, .28), transparent 55%),
-    linear-gradient(160deg, #071329, #101f49 55%, #070e24);
-}
-html[data-sky="starry"] .shell::before {
-  content: ""; position: absolute; inset: -80%; z-index: -1; pointer-events: none;
-  background-image: radial-gradient(1px 1px at 5% 10%, #fff 99%, transparent), radial-gradient(2px 2px at 18% 42%, #dbeaff 99%, transparent),
-    radial-gradient(1px 1px at 32% 20%, #fff 99%, transparent), radial-gradient(2px 2px at 45% 76%, #c9dcff 99%, transparent),
-    radial-gradient(1px 1px at 59% 8%, #fff 99%, transparent), radial-gradient(2px 2px at 70% 55%, #d8e7ff 99%, transparent),
-    radial-gradient(1px 1px at 81% 30%, #fff 99%, transparent), radial-gradient(2px 2px at 93% 83%, #c7dcff 99%, transparent);
-  background-size: 190px 210px; opacity: .65;
-  animation: sky-turn 120s linear infinite;
-}
-html[data-sky="starry"] .shell::after {
-  content: ""; position: absolute; z-index: -1; pointer-events: none;
-  width: 2px; height: 2px; top: 24%; left: 68%; border-radius: 50%;
-  background: #fff; box-shadow: 0 0 6px 2px rgba(226,240,255,.75);
-  animation: sky-shoot 9s ease-in infinite;
-}
-@keyframes sky-turn { to { transform: rotate(360deg); } }
-@keyframes sky-shoot {
-  0%, 58%, 75%, 100% { opacity: 0; transform: translate(0, 0) scaleX(1); }
-  62% { opacity: 1; transform: translate(-18px, 9px) scaleX(15); }
-  69% { opacity: 0; transform: translate(-105px, 57px) scaleX(42); }
-}
-@media (prefers-reduced-motion: reduce) {
-  html[data-sky="starry"] .shell::before, html[data-sky="starry"] .shell::after { animation: none; }
-  html[data-sky="starry"] .shell::after { display: none; }
-}
+html[data-sky="starry"] .shell { isolation: isolate; background: #000; }
+/* The night sky: black, with stars that fade in and out in random places and now and then a shooting star.
+   theme.js fills .sky-layer; nothing in it turns or drifts. */
+.sky-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; border-radius: inherit; }
+.sky-layer .star { position: absolute; border-radius: 50%; background: #fff; opacity: 0;
+  box-shadow: 0 0 4px 1px rgba(210, 228, 255, .6); animation: star-twinkle var(--dur, 4s) ease-in-out var(--delay, 0s) infinite; }
+.sky-layer .shooter { position: absolute; height: 1.5px; width: 90px; border-radius: 2px; opacity: 0;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.95)); box-shadow: 0 0 6px 1px rgba(210, 228, 255, .5); }
+@keyframes star-twinkle { 0%, 100% { opacity: 0; transform: scale(.6); } 50% { opacity: var(--peak, 1); transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .sky-layer .star { animation: none; opacity: .6; } .sky-layer .shooter { display: none; } }
 html[data-material="glass"] input[type=date], html[data-material="glass"] input[type=time] { color-scheme: var(--native-scheme); }
 html[data-material="glass"] .shell .btn, html[data-material="glass"] .shell .icon-btn { backdrop-filter: blur(10px); }
 @media (prefers-reduced-motion: reduce) {

@@ -124,7 +124,21 @@ const REPLY_LENGTH = {
   normal: `\n\nAnswer length: keep replies concise, usually under 150 words. No preamble or closing summary.`,
   detailed: "",
 };
-const replyLengthRule = () => REPLY_LENGTH[loadConfig().replyLength] ?? REPLY_LENGTH.short;
+// Personalization (Settings > Claude & privacy): a tone preset and the user's own words about how Claude should talk.
+// Both empty means Claude answers as it normally does, within the length above.
+const REPLY_TONE = {
+  friendly: "Tone: warm, friendly and encouraging.",
+  professional: "Tone: professional and precise, like a good colleague's email.",
+  casual: "Tone: relaxed and conversational, like texting a smart friend.",
+  direct: "Tone: blunt and direct. No small talk or hedging.",
+};
+const stylePrompt = () => {
+  const cfg = loadConfig();
+  const custom = String(cfg.replyStyle || "").trim().slice(0, 600);
+  const parts = [REPLY_TONE[cfg.replyTone], custom && `The user's own preferences for how you respond (follow them, even over the length above if they ask for more detail): ${custom}`].filter(Boolean);
+  return parts.length ? "\n\n" + parts.join("\n") : "";
+};
+const replyLengthRule = () => (REPLY_LENGTH[loadConfig().replyLength] ?? REPLY_LENGTH.short) + stylePrompt();
 function writeInstructions() {
   const text = systemPrompt() + modePrompt(activeMode()) + replyLengthRule();
   fs.writeFileSync(path.join(workDir(), "system-prompt.txt"), text);
@@ -598,9 +612,11 @@ function chatOptions() {
     addDirs: [os.homedir()],
     systemPromptFile: path.join(workDir(), "system-prompt.txt"),
     ...(CHAT_SPEEDS[cfg.chatSpeed] || CHAT_SPEEDS.balanced),
+    ...(cfg.chatModel ? { model: cfg.chatModel } : {}),       // a model picked in Settings wins over the speed preset's
     mode: activeMode().id + ":" + activeMode().instructions, // a mode change restarts the chat with the new instructions
     auth: authSignature(),                                    // so does switching between subscription and API key
     length: loadConfig().replyLength || "short",              // and changing the answer length
+    style: stylePrompt(),                                     // or how Claude should talk
   };
 }
 
@@ -658,6 +674,7 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
   const { json } = res;
   if (json.is_error) return { ok: false, error: aiError(json.result || `${aiName()} returned an error (${json.subtype}).`) };
 
+  reportUsage(json);
   let text = json.result || "";
   if (json.subtype === "error_max_turns") text += "\n\n_(Stopped after too many steps. Say \"continue\" to keep going.)_";
   const { text: noMemory, facts } = extractMemoryBlocks(text);
@@ -676,6 +693,15 @@ async function chatTurn(prompt, { display = null, image = false, extraAllowed = 
 
 // The CLI tells Claude "no prompt could be shown", and Claude tends to repeat that. The widget's Allow
 // card *is* the prompt, so drop those sentences when a card is shown.
+// Tells the chat bar how full the conversation is: what the latest request carried, out of the model's window, and the
+// tokens this conversation has used in all.
+let usageTotal = 0;
+function reportUsage(json) {
+  const u = json.usage || {};
+  usageTotal += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0);
+  const [model, info] = Object.entries(json.modelUsage || {})[0] || [];
+  widget?.webContents.send("chat-event", { type: "usage", context: (chat.lastContext || 0) + (u.output_tokens || 0), window: info?.contextWindow || 200000, total: usageTotal, model: model || "" });
+}
 function tidyBlockedText(text) {
   const noise = /approval prompt|can'?t show|cannot show|no way to show|unable to show|denied automatically|automatically denied|permission (settings|mode)|new session|run (it|them|this) yourself|didn'?t try another way/i;
   const kept = text.split("\n").map((line) =>
@@ -1022,7 +1048,7 @@ ipcMain.handle("get-settings", () => {
   const cfg = loadConfig();
   return {
     theme: cfg.theme, pill: cfg.pill, shortcuts: getShortcuts(), hotkeys: cfg.hotkeys, modes: getModes(), activeMode: activeMode().id,
-    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", replyLength: cfg.replyLength || "short", focusChecks: { ...FOCUS_DEFAULTS, ...cfg.focusChecks }, auth: authStatus(),
+    memoryEnabled: cfg.memoryEnabled, autoScan: cfg.autoScan, notesSync: cfg.notesSync !== false, autoAllow: cfg.autoAllow, chatSpeed: cfg.chatSpeed || "balanced", replyLength: cfg.replyLength || "short", replyTone: cfg.replyTone || "", replyStyle: cfg.replyStyle || "", chatModel: cfg.chatModel || "", focusChecks: { ...FOCUS_DEFAULTS, ...cfg.focusChecks }, auth: authStatus(),
     openAtLogin: getOpenAtLogin(), notify: notifyCfg(),
     premium: { launched: premium.LAUNCHED, locked: Object.keys(premium.FEATURES).filter((f) => !hasPremium(f)) },
     panels: panelList(), building, version: app.getVersion(),
@@ -1035,6 +1061,9 @@ ipcMain.handle("set-setting", (_e, key, value) => {
   else if (key === "chatSpeed" && CHAT_SPEEDS[value]) { saveConfig({ chatSpeed: value }); chat.warm(); }
   else if (key === "focusChecks" && value && typeof value === "object") saveConfig({ focusChecks: { ...FOCUS_DEFAULTS, ...loadConfig().focusChecks,
     ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}), ...([2, 3, 5, 10].includes(value.everyMin) ? { everyMin: value.everyMin } : {}) } });
+  else if (key === "replyTone" && (value === "" || value in REPLY_TONE)) { saveConfig({ replyTone: value }); writeInstructions(); chat.warm(); }
+  else if (key === "replyStyle" && typeof value === "string") { saveConfig({ replyStyle: value.slice(0, 600) }); writeInstructions(); chat.warm(); }
+  else if (key === "chatModel" && typeof value === "string" && /^[\w.\-\[\]]{0,60}$/.test(value.trim())) { saveConfig({ chatModel: value.trim() }); chat.warm(); }
   else if (key === "replyLength" && value in REPLY_LENGTH) { saveConfig({ replyLength: value }); writeInstructions(); chat.warm(); }
   else if (key === "openAtLogin") setOpenAtLogin(!!value);
   else return false;
@@ -1475,6 +1504,7 @@ ipcMain.on("widget-open-chat", (e, prompt) => {
 
 ipcMain.handle("reset", () => {
   chat.reset();
+  usageTotal = 0;
   fs.rmSync(chatHistoryPath(), { force: true });
   pendingApprovals = new Map();
   declinedNote = "";

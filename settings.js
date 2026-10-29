@@ -407,6 +407,9 @@ function renderClaude() {
   $("autoScan").checked = S.autoScan;
   document.querySelectorAll("#chatSpeed button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.chatSpeed));
   document.querySelectorAll("#replyLength button").forEach((b) => b.classList.toggle("on", b.dataset.v === S.replyLength));
+  document.querySelectorAll("#replyTone button").forEach((b) => b.classList.toggle("on", b.dataset.v === (S.replyTone || "")));
+  if (document.activeElement !== $("replyStyle")) $("replyStyle").value = S.replyStyle || "";
+  if (document.activeElement !== $("chatModel")) $("chatModel").value = S.chatModel || "";
   $("focusOn").checked = S.focusChecks.enabled;
   $("focusEveryRow").style.opacity = S.focusChecks.enabled ? "" : ".45";
   document.querySelectorAll("#focusEvery button").forEach((b) => b.classList.toggle("on", Number(b.dataset.v) === S.focusChecks.everyMin));
@@ -441,6 +444,17 @@ $("replyLength").addEventListener("click", async (e) => {
   await ov.setSetting("replyLength", e.target.dataset.v);
   S.replyLength = e.target.dataset.v;
   renderClaude();
+});
+$("replyTone").addEventListener("click", async (e) => {
+  if (e.target.dataset.v === undefined) return;
+  await ov.setSetting("replyTone", e.target.dataset.v);
+  S.replyTone = e.target.dataset.v;
+  renderClaude();
+});
+$("replyStyle").addEventListener("change", async () => { S.replyStyle = $("replyStyle").value; await ov.setSetting("replyStyle", S.replyStyle); });
+$("chatModel").addEventListener("change", async () => {
+  const ok = await ov.setSetting("chatModel", $("chatModel").value.trim());
+  if (ok) S.chatModel = $("chatModel").value.trim(); else $("chatModel").value = S.chatModel || "";
 });
 $("clearMem").onclick = async () => { await ov.clearMemory(); $("clearMem").textContent = "Cleared"; };
 $("allowList").addEventListener("click", async (e) => {

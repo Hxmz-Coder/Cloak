@@ -216,7 +216,13 @@ function setBusy(b) {
 
 // The reply being written right now: text streams in, and a line under it says what Claude is doing.
 let live = null; // { el, text }
+const fmtTok = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n);
 window.overlay.onChatEvent((ev) => {
+  if (ev.type === "usage") {
+    const pct = Math.min(100, Math.round(ev.context / ev.window * 100));
+    $("usage").innerHTML = `${esc(ev.model.replace(/^claude-/, "").replace(/\[.*\]$/, ""))} · Context ${fmtTok(ev.context)} / ${fmtTok(ev.window)}<i><b style="width:${pct}%"></b></i>${pct}% · Used ${fmtTok(ev.total)}`;
+    return;
+  }
   if (!live) return;
   if (ev.type === "text") {
     live.text += ev.text;
@@ -465,6 +471,7 @@ async function newChat() {
   if (busy) return;
   await window.overlay.reset();
   log.innerHTML = "";
+  $("usage").textContent = "";
   setMode("bar");
   input.focus();
 }
