@@ -4,6 +4,7 @@
   display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 6px 0 12px; flex-shrink: 0;
   -webkit-app-region: drag; cursor: grab; border-bottom: 1px solid var(--border);
 }
+html[data-material="glass"] body.panel-dragging .phead { cursor: grabbing; background: rgba(var(--accent-rgb), .09); }
 .phead button, .phead input, .phead select { -webkit-app-region: no-drag; }
 .phead .badge { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; }
 .phead .badge svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }

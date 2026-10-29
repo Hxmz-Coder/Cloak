@@ -5,7 +5,7 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const ALL = ["first-run", "notifications", "chatgpt", "listen", "talk", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"];
+const ALL = ["first-run", "glass-motion", "notifications", "chatgpt", "listen", "talk", "student", "practice", "writer-coder", "actions", "notes", "builders", "edge-cases"];
 const args = process.argv.slice(2);
 const repeat = Number((args.find((a) => /^x\d+$/.test(a)) || "x1").slice(1));
 const picked = args.filter((a) => ALL.includes(a));

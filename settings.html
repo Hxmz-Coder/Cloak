@@ -53,7 +53,7 @@
   .preview .chip { height: 28px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; }
   .preview .chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
-  .styles { display: flex; gap: 10px; }
+  .styles { display: flex; flex-wrap: wrap; gap: 10px; }
   .styles button { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 18px 10px; border-radius: 12px;
     background: var(--panel); border: 1px solid var(--border); cursor: pointer; color: var(--muted); font-size: 12.5px; min-width: 130px; }
   .styles button.on { border-color: var(--accent); color: var(--text); background: rgba(var(--accent-rgb), .08); }
@@ -77,6 +77,8 @@
   .logo-demo[data-icon="classic"] .logo { border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--accent-2)); font-weight: 700; font-size: 13px; color: var(--on-accent); }
   .logo-demo[data-icon="classic"] .logo::before, .logo-demo[data-icon="custom"] .logo::before { content: none; }
   .logo-demo[data-icon="custom"] .logo { border-radius: 50%; background: var(--icon-image, var(--panel-hi)) center / cover no-repeat; }
+  .logo-demo[data-icon="ring"] .logo { border-radius: 50%; background: var(--ring-color, var(--accent)); }
+  .logo-demo[data-icon="ring"] .logo::before { inset: 4px; background: var(--ring-mark, #fff); }
   .logo-demo:not([data-icon]) .logo { border-radius: 0; background: none; }
   .logo-demo:not([data-icon]) .logo::before { content: ""; }
   .mem-text { outline: 0; border-radius: 6px; padding: 1px 4px; margin-left: -4px; cursor: text; user-select: text; }
@@ -139,9 +141,11 @@
         <h2>Appearance</h2>
         <p class="lead">Changes apply to every widget right away.</p>
         <h3 data-premium="liquidGlass">Material</h3>
-        <div class="seg" id="materialPick"><button data-v="classic">Classic</button><button data-v="glass">Liquid Glass</button></div>
-        <p class="hint" style="margin:6px 0 0">A softly layered glass look, with subtle light and movement.</p>
-        <div id="glassTint" style="display:none"><h3>Glass tint</h3><div class="seg" id="tintPick"><button data-v="dark">Dark</button><button data-v="light">Light</button></div></div>
+        <div class="seg" id="materialPick"><button data-v="classic">Classic</button><button data-v="glass">Liquid Glass</button><button data-v="starry">Starry Night</button></div>
+        <p class="hint" style="margin:6px 0 0">Liquid Glass has blue light and movement; Starry Night adds a slowly turning illustrated sky and shooting stars.</p>
+        <div id="glassTint" style="display:none"><h3>Glass tint</h3><div class="seg" id="tintPick"><button data-v="dark">Dark blue</button><button data-v="light">Light blue</button></div></div>
+        <h3>Corner shape</h3>
+        <div class="row"><div class="grow"><div class="t">Corners</div><div class="d">Choose sharper or rounder edges for widgets and the top pill.</div></div><input type="range" id="corners" min="0" max="4" step="1" /><span id="cornersVal" class="muted" style="min-width:62px;text-align:right"></span></div>
         <div id="classicColors">
           <h3 data-premium="colors">Accent color</h3>
           <div class="swatches" id="swatches"></div>
@@ -161,6 +165,7 @@
         <div class="styles" id="iconPick">
           <button data-v="cloak"><span class="logo-demo"><span class="logo"></span></span>Cloak</button>
           <button data-v="classic"><span class="logo-demo" data-icon="classic"><span class="logo">✳</span></span>Classic</button>
+          <button data-v="ring"><span class="logo-demo" data-icon="ring"><span class="logo"></span></span>Color ring</button>
           <button data-v="custom"><span class="logo-demo" id="customDemo" data-icon="custom"><span class="logo"></span></span><span id="customLabel">Your picture</span></button>
         </div>
         <p class="hint" style="margin:6px 0 0">Shown on the top widget and in the chat bar. The Cloak icon takes your accent color.</p>

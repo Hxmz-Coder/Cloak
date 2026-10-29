@@ -30,10 +30,13 @@ const COLORS = [
   ["Blue", "#5b8def"], ["Indigo", "#7b7ff0"], ["Purple", "#a77be6"], ["Pink", "#e06aa6"], ["Graphite", "#9aa0a8"],
 ];
 function renderAppearance() {
-  const glass = S.theme.material === "glass";
+  const material = S.theme.material || "classic";
+  const glass = material === "glass" || material === "starry";
   $("classicColors").style.display = glass ? "none" : "";
-  $("glassTint").style.display = glass ? "" : "none";
-  document.querySelectorAll("#materialPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === (glass ? "glass" : "classic")));
+  $("glassTint").style.display = material === "glass" ? "" : "none";
+  document.querySelectorAll("#materialPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === material));
+  $("corners").value = S.theme.corners ?? 2;
+  $("cornersVal").textContent = ["Sharp", "Sharper", "Default", "Rounder", "Round"][S.theme.corners ?? 2];
   document.querySelectorAll("#tintPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === (S.theme.tint || "dark")));
   const cur = S.theme.accent.toLowerCase();
   $("swatches").innerHTML = COLORS.map(([name, hex]) =>
@@ -66,13 +69,14 @@ $("opacity").addEventListener("input", () => {
 $("themeReset").onclick = () => setTheme({ accent: "#d97757", background: "#161413", opacity: 0.95 });
 $("materialPick").addEventListener("click", (e) => { if (e.target.dataset.v) setTheme({ material: e.target.dataset.v }); });
 $("tintPick").addEventListener("click", (e) => { if (e.target.dataset.v) setTheme({ tint: e.target.dataset.v }); });
+$("corners").addEventListener("input", () => { $("cornersVal").textContent = ["Sharp", "Sharper", "Default", "Rounder", "Round"][$("corners").value]; setTheme({ corners: Number($("corners").value) }); });
 // Background color: dark tones that keep text readable (any color via Custom).
 const BACKGROUNDS = [["Charcoal", "#161413"], ["Black", "#050505"], ["Slate", "#141821"], ["Navy", "#0f1630"], ["Forest", "#0f1d16"],
   ["Plum", "#1e1224"], ["Wine", "#24100f"], ["Mocha", "#241a14"]];
 $("bgSwatches").addEventListener("click", (e) => { if (e.target.dataset.hex) setTheme({ background: e.target.dataset.hex }); });
 $("bgSwatches").addEventListener("input", (e) => { if (e.target.id === "customBg") ov.setTheme({ background: e.target.value }); });
 $("bgSwatches").addEventListener("change", (e) => { if (e.target.id === "customBg") setTheme({ background: e.target.value }); });
-// Icon: the Cloak mark, the classic star, or a picture of your own (double-click it to choose another).
+// Icon: the Cloak mark, the classic star, a color ring, or a picture of your own (double-click it to choose another).
 $("iconPick").addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b) return;

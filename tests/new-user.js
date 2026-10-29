@@ -95,6 +95,42 @@ function makePdf(file, lines) {
 
 // ---------- scenarios ----------
 const SCENARIOS = {
+  // The glass surface enters gently, reacts to manual movement, and survives interrupted hides.
+  async "glass-motion"() {
+    await call("welcome-done", { profile: {}, mode: "general" });
+    await call("set-theme", { material: "glass", tint: "dark" });
+    await call("panel-show", "tasks");
+    const t = await win("Claude Tasks");
+    await wait(100);
+    const state = () => js(t, `return { material: document.documentElement.dataset.material, classes: document.body.className, animation: getComputedStyle(document.querySelector(".shell")).animationName }`);
+    check("glass entrance plays on first opening", t?.isVisible() && (await state()).classes.includes("panel-enter"));
+    await wait(550);
+    check("glass entrance finishes", !(await state()).classes.includes("panel-enter"));
+    t.emit("will-move"); await wait(40);
+    check("moving a panel lifts its surface", (await state()).classes.includes("panel-dragging"));
+    await wait(190);
+    check("movement settles after dragging stops", (await state()).classes.includes("panel-settling"));
+    await wait(350);
+    check("movement effect clears", !(await state()).classes.includes("panel-settling"));
+    ipcMain.emit("toggle-panel", {}, "tasks"); await wait(55);
+    check("hiding reports the panel closed immediately", !(await call("panel-show", "notes")).find((p) => p.name === "tasks").visible && (await state()).classes.includes("panel-exit"));
+    await call("panel-show", "tasks"); await wait(60);
+    check("reopening during exit cancels the hide", t.isVisible() && !(await state()).classes.includes("panel-exit") && (await state()).classes.includes("panel-enter"));
+    await wait(230);
+    check("cancelled hide does not close the panel later", t.isVisible() && (await call("get-config")).panels.find((p) => p.name === "tasks").visible);
+    ipcMain.emit("toggle-panel", {}, "tasks"); await wait(240);
+    check("glass panel hides after the exit", !t.isVisible());
+    await call("panel-show", "tasks"); await wait(55);
+    check("reopening a hidden panel replays entrance", t.isVisible() && (await state()).classes.includes("panel-enter"));
+    t.webContents.debugger.attach("1.3");
+    await t.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+    check("reduced motion disables glass entrance", (await state()).animation === "none");
+    t.emit("will-move"); await wait(40);
+    check("reduced motion disables movement scaling", await js(t, `return getComputedStyle(document.querySelector(".shell")).transform`) === "none");
+    t.webContents.debugger.detach();
+    await call("set-theme", { material: "classic" }); await wait(560);
+    check("classic panel does not retain motion classes", (await state()).material === "classic" && !(await state()).classes.includes("panel-enter"));
+  },
   // The UI from first launch: setup guide, pill, bar, settings, panels. No Claude answers needed.
   async "first-run"() {
     const wel = await win("Claude Welcome");

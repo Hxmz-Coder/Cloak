@@ -49,8 +49,8 @@ function fit() {
   if (mode === "pill") size = body.classList.contains("dot-style") ? 58 : Math.ceil($("pillInfo").getBoundingClientRect().width) + 64;
   else if (mode === "notify") size = $("island").offsetHeight + 16;
   else if (mode === "bar") size = 44 + $("tiles").offsetHeight + (body.classList.contains("has-shot") ? 42 : 0) + 16;
-  const key = `${mode}:${size}`;
-  if (key !== lastSize) { lastSize = key; window.overlay.setMode(mode, size); }
+  const key = `${mode}:${size}:${busy}`;
+  if (key !== lastSize) { lastSize = key; window.overlay.setMode(mode, size, busy); }
 }
 window.addEventListener("resize", () => requestAnimationFrame(fit));
 
@@ -210,6 +210,7 @@ function setShot(b64) {
 function setBusy(b) {
   busy = b;
   body.classList.toggle("busy", b);
+  if (mode === "pill") sendSize();
   updateStatus();
 }
 

@@ -43,4 +43,7 @@ contextBridge.exposeInMainWorld("overlay", {
   getTheme: () => ipcRenderer.invoke("get-theme"),
   onTheme: (cb) => ipcRenderer.on("theme", (_e, t) => cb(t)),
   onPanelShown: (cb) => ipcRenderer.on("panel-shown", () => cb()),
+  onPanelHiding: (cb) => ipcRenderer.on("panel-hiding", () => cb()),
+  onPanelHideCancelled: (cb) => ipcRenderer.on("panel-hide-cancelled", () => cb()),
+  onPanelMoving: (cb) => ipcRenderer.on("panel-moving", () => cb()),
 });

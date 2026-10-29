@@ -17,10 +17,15 @@
 
   function apply(theme) {
     if (!theme) return;
-    const glass = theme.material === "glass";
-    const light = glass && theme.tint === "light";
+    const starry = theme.material === "starry";
+    const glass = theme.material === "glass" || starry;
+    const light = !starry && glass && theme.tint === "light";
     document.documentElement.dataset.material = glass ? "glass" : "classic";
+    document.documentElement.dataset.sky = starry ? "starry" : "none";
     document.documentElement.dataset.tint = light ? "light" : "dark";
+    const corners = Math.max(0, Math.min(4, Number.isFinite(Number(theme.corners)) ? Number(theme.corners) : 2));
+    root.setProperty("--corner-scale", [0, .5, 1, 1.5, 2][corners]);
+    document.documentElement.dataset.corners = String(corners);
     const rgb = glass ? (light ? [45, 85, 130] : [164, 202, 255]) : hexToRgb(theme.accent);
     root.setProperty("--accent", `rgb(${rgb.join(",")})`);
     root.setProperty("--accent-rgb", rgb.join(", "));
@@ -31,10 +36,13 @@
     const a = document.documentElement.hasAttribute("data-opaque") ? 1 : glass ? (light ? 0.82 : 0.74) : Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
     root.setProperty("--bg-alpha", String(a));
     root.setProperty("--native-scheme", glass && light ? "light" : "dark");
-    root.setProperty("--bg-rgb", (glass ? (light ? [238, 245, 252] : [19, 29, 44]) : hexToRgb(theme.background || "#161413")).join(", "));
+    root.setProperty("--bg-rgb", (starry ? [6, 17, 40] : glass ? (light ? [214, 234, 252] : [12, 30, 64]) : hexToRgb(theme.background || "#161413")).join(", "));
     // The mark: "cloak" (default), "classic" or "custom" (a picture you chose, as a data: URL).
-    const icon = theme.icon === "custom" && theme.iconData ? "custom" : theme.icon === "classic" ? "classic" : "cloak";
+    const icon = theme.icon === "custom" && theme.iconData ? "custom" : theme.icon === "classic" ? "classic" : theme.icon === "ring" ? "ring" : "cloak";
     document.documentElement.dataset.icon = icon;
+    const ringColor = hexToRgb(theme.accent);
+    root.setProperty("--ring-color", `rgb(${ringColor.join(",")})`);
+    root.setProperty("--ring-mark", ringColor.every((c) => c > 240) ? "#d1d5db" : "#ffffff");
     if (icon === "custom") root.setProperty("--icon-image", `url("${theme.iconData}")`);
   }
 

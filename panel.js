@@ -4,10 +4,53 @@
 (() => {
   document.querySelector(".min")?.addEventListener("click", () => window.overlay.hidePanel());
 
-  if (document.body.hasAttribute("data-fixed")) {
+  let settleTimer;
+  let enterTimer;
+  let dragTimer;
+  const body = document.body;
+  function settle() {
+    if (!body.classList.contains("panel-dragging")) return;
+    body.classList.remove("panel-dragging");
+    body.classList.add("panel-settling");
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => body.classList.remove("panel-settling"), 340);
+  }
+  function appear(animate) {
+    clearTimeout(dragTimer);
+    clearTimeout(settleTimer);
+    body.classList.remove("panel-exit", "panel-dragging", "panel-settling");
+    if (document.documentElement.dataset.material !== "glass" || !animate) return;
+    body.classList.remove("panel-enter");
+    void body.offsetWidth; // restart the entrance when a hidden panel opens again
+    body.classList.add("panel-enter");
+    clearTimeout(enterTimer);
+    enterTimer = setTimeout(() => body.classList.remove("panel-enter"), 540);
+  }
+  window.overlay.onPanelShown?.(appear);
+  window.overlay.onPanelHiding?.(() => {
+    if (document.documentElement.dataset.material !== "glass") return;
+    clearTimeout(enterTimer);
+    clearTimeout(dragTimer);
+    clearTimeout(settleTimer);
+    body.classList.remove("panel-enter", "panel-dragging", "panel-settling");
+    body.classList.add("panel-exit");
+  });
+  // Restore the surface if a hide is interrupted by showing the same window again.
+  window.overlay.onPanelHideCancelled?.(() => body.classList.remove("panel-exit"));
+
+  if (body.hasAttribute("data-fixed")) {
     document.querySelector(".grip")?.remove();
     return;
   }
+
+  // Electron reports manual title-bar drags from the main process; resizing and saved-position restores are excluded.
+  window.overlay.onPanelMoving?.(() => {
+    if (document.documentElement.dataset.material !== "glass") return;
+    body.classList.remove("panel-enter", "panel-settling");
+    body.classList.add("panel-dragging");
+    clearTimeout(dragTimer);
+    dragTimer = setTimeout(settle, 180);
+  });
 
   // Invisible handles along the edges of the panel (inside the window's transparent margin).
   const css = document.createElement("style");

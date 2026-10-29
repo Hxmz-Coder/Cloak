@@ -5,7 +5,7 @@ const on = (ch) => (cb) => ipcRenderer.on(ch, (_e, data) => cb(data));
 contextBridge.exposeInMainWorld("overlay", {
   platform: process.platform, // "darwin" on a Mac: a few labels and shortcut keys differ
   // main widget
-  setMode: (m, size) => ipcRenderer.send("set-mode", m, size),
+  setMode: (m, size, busy) => ipcRenderer.send("set-mode", m, size, !!busy),
   focus: () => ipcRenderer.send("focus"),
   hideWidget: () => ipcRenderer.send("hide-widget"),
   ask: (payload) => ipcRenderer.invoke("ask", payload),
@@ -52,6 +52,9 @@ contextBridge.exposeInMainWorld("overlay", {
   resizePanel: (w, h) => ipcRenderer.send("panel-resize", w, h),
   setPanelBounds: (b) => ipcRenderer.send("panel-set-bounds", b),
   onPanelShown: on("panel-shown"),
+  onPanelHiding: on("panel-hiding"),
+  onPanelHideCancelled: on("panel-hide-cancelled"),
+  onPanelMoving: on("panel-moving"),
 
   // tasks
   scanTasks: (sources) => ipcRenderer.invoke("scan-tasks", sources),

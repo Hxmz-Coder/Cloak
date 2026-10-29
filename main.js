@@ -6,10 +6,12 @@ const { pathToFileURL } = require("url");
 const { runClaude, friendlyError, findClaude, setAuth, cliEnv } = require("./lib/claude");
 const { spawn, execFileSync } = require("child_process");
 const { ChatSession } = require("./lib/chat");
+const { WEB_SEARCH_POLICY } = require("./lib/web-search");
 const { TOOLS, AUTO_ALLOWED, describeDenial } = require("./lib/permissions");
 const { ScreenMemory } = require("./lib/memory");
 const { TaskStore, extractTaskBlocks, scanSchema } = require("./lib/tasks");
 const { MemoryStore, extractMemoryBlocks } = require("./lib/memories");
+const { recall } = require("./lib/memory-recall");
 const { Listener } = require("./lib/listen");
 const { Talker } = require("./lib/talk");
 const launcher = require("./lib/launcher");
@@ -84,13 +86,13 @@ Work autonomously. When a request takes several steps, carry them all out withou
 
 Some actions need the user's approval: shell commands that change things, creating or editing files, and opening web pages. When one of these is denied, that is expected: the widget automatically shows the user an Allow button for exactly that action, and if they allow it you'll be asked to retry. So finish everything else you can, then say in one short line what you're waiting on (e.g. "Waiting for your OK to create notes.txt."). Don't explain permission settings, don't suggest starting a new session or running it themselves, and never try to get around a block another way.
 
-For current information like weather, use WebSearch before answering. If the user's location isn't known, ask for a city rather than assuming one. Give the forecast date and source, and say when live results aren't available. Do not claim a search happened unless a tool returned results.
+${WEB_SEARCH_POLICY}
 
 Screenshots: when the user's message lists screenshot paths, open them with the Read tool before answering.
 
 Task list: the user has a task list widget. To add tasks to it, put a fenced code block with the language "tasks" in your reply, one task per line as "category | title | due | time", where category is homework, email, unfinished or other, due is an optional YYYY-MM-DD date, and time is an optional 24-hour HH:MM (only with a due date). Put dates and times in those fields, not in the title. Example: "homework | Study for biology quiz | 2026-10-17 | 16:00". The widget removes the block and adds the tasks. Add tasks when the user asks, or when you notice something they clearly need to do later. Don't add duplicates of their open tasks.
 
-Memory: the user can ask you to remember things. What they've asked you to remember is listed in the widget context with each message; use it. To save something new (when they ask you to remember it, or tell you a lasting fact or preference about themselves), put a fenced code block with the language "memory" in your reply, one fact per line, each a complete sentence that makes sense on its own later (e.g. "The user's biology exam is on Friday, October 23 at 3 PM."). The widget removes the block and saves it. Mention briefly that you'll remember it. Never save passwords or other secrets. Files the user saved to memory are listed there too, each with a summary and its path: open one with the Read tool when you need more than the summary.
+Memory: the user can ask you to remember things. What they've asked you to remember is listed in the widget context with each message; use it. To save something new (when they ask you to remember it, or tell you a lasting fact or preference about themselves), put a fenced code block with the language "memory" in your reply, one fact per line, each a complete sentence that makes sense on its own later (e.g. "The user's biology exam is on Friday, October 23 at 3 PM."). The widget removes the block and saves it. Mention briefly that you'll remember it. Never save passwords or other secrets. Files the user saved to memory are listed there too, each with a summary and its path: open one with the Read tool when you need more than the summary. When the user asks you to recall memory, use the memory-first lookup in widget context; if it cannot answer, search normally for public information when useful, but never invent a missing personal memory.
 
 Notes: the user keeps personal notes in a notes widget. They are the user's own writing; you only see them when they're included in a message. Never rewrite or "submit" them.
 
@@ -152,7 +154,7 @@ const PANELS = {
   settings: { file: "settings.html", size: [800, 600], min: [800, 600], label: "Settings", standalone: true, fixed: true },
   welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
-const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95, background: "#161413", material: "classic", tint: "dark", icon: "cloak", iconData: null };
+const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95, background: "#161413", material: "classic", tint: "dark", icon: "cloak", iconData: null, corners: 2 };
 const DEFAULT_HOTKEYS = { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S", listen: "CommandOrControl+Alt+L" };
 
 const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], showMode: true, position: "center" };
@@ -239,10 +241,13 @@ function modeMenuItems() {
 const readNotes = () => { try { return fs.readFileSync(notesPath(), "utf8"); } catch { return ""; } };
 
 // ---------- main widget ----------
-function placeWidget(mode, size) {
+function placeWidget(mode, size, busy = false) {
   let [w, h] = WIDGET[mode] || WIDGET.pill;
   if (mode === "bar" && size) h = Math.min(size, 360);
-  if (mode === "pill" && size) w = Math.max(56, Math.min(size, 560));
+  if (mode === "pill" && size) {
+    w = Math.max(56, Math.min(size, 560));
+    if (busy) h += 24;
+  }
   if (mode === "notify" && size) h = Math.max(70, Math.min(size, 240));
   const { workArea } = screen.getPrimaryDisplay();
   const pos = loadConfig().pill.position;
@@ -343,16 +348,26 @@ function createPanel(name) {
   const remember = () => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      if (win.isDestroyed() || !win.isVisible()) return;
-      saveConfig({ panelBounds: { ...loadConfig().panelBounds, [name]: win.getBounds() } });
+      if (win.isDestroyed() || !win.isVisible() || overviewBounds.has(name)) return;
+      const bounds = win.getBounds();
+      saveConfig({ panelBounds: { ...loadConfig().panelBounds, [name]: bounds } });
     }, 400);
   };
   win.on("move", remember);
+  if (!spec.fixed && !spec.standalone) win.on("will-move", () => {
+    if (win.isVisible() && !panelHideTimers.has(name) && !win.webContents.isDestroyed()) {
+      overviewBounds.delete(name);
+      win.webContents.send("panel-moving");
+    }
+  });
   win.on("resize", remember);
   if (name === "listen" || name === "talk") win.webContents.setBackgroundThrottling(false); // keeps listening while minimized
   // Closed some other way than our hide (e.g. Alt+F4): forget it, or the next click hits a destroyed window.
   const wcId = win.webContents.id;
   win.on("closed", () => {
+    clearTimeout(panelHideTimers.get(name));
+    panelHideTimers.delete(name);
+    overviewBounds.delete(name);
     widgetIdBySender.delete(wcId);
     if (panels[name] === win) { delete panels[name]; notifyPanels(); }
   });
@@ -375,10 +390,15 @@ function panelWindow(name) {
 }
 // Really on screen. A minimized window (after sleep, or "show desktop") counts as hidden, so a click brings it back
 // instead of "hiding" it.
-const isShowing = (name) => usable(panels[name]) && panels[name].isVisible() && !panels[name].isMinimized();
+const panelHideTimers = new Map();
+const overviewBounds = new Map();
+const isShowing = (name) => usable(panels[name]) && panels[name].isVisible() && !panels[name].isMinimized() && !panelHideTimers.has(name);
 function destroyPanel(name) {
   const win = panels[name];
   if (!win) return;
+  clearTimeout(panelHideTimers.get(name));
+  panelHideTimers.delete(name);
+  overviewBounds.delete(name);
   delete panels[name];
   widgetIdBySender.delete(win.webContents.id);
   win.destroy();
@@ -396,14 +416,81 @@ const anyPanelVisible = () => Object.keys(panels).some((n) => !panelSpec(n)?.sta
 function showPanel(name, focus) {
   const w = panelWindow(name);
   if (!w) return;
+  const wasVisible = isShowing(name);
+  const wasHiding = panelHideTimers.has(name);
+  const wasOverview = overviewBounds.has(name);
+  clearTimeout(panelHideTimers.get(name));
+  panelHideTimers.delete(name);
+  if (wasHiding) w.webContents.send("panel-hide-cancelled");
   if (w.isMinimized()) w.restore();
+  overviewBounds.delete(name);
   w.setBounds(savedBounds(name));
   if (focus) { w.show(); w.focus(); } else w.showInactive();
-  w.webContents.send("panel-shown");
+  if (!w.webContents.isLoading()) w.webContents.send("panel-shown", !wasVisible || wasOverview);
+  else w.webContents.once("did-finish-load", () => {
+    if (panels[name] === w && isShowing(name)) w.webContents.send("panel-shown", !wasVisible || wasOverview);
+  });
   notifyPanels();
 }
-function hidePanel(name) { panels[name]?.hide(); notifyPanels(); }
+function hidePanel(name, immediate = false) {
+  const w = panels[name];
+  if (!w) return;
+  overviewBounds.delete(name);
+  const wasHiding = panelHideTimers.has(name);
+  if (wasHiding && !immediate) return;
+  clearTimeout(panelHideTimers.get(name));
+  panelHideTimers.delete(name);
+  if (wasHiding) w.webContents.send("panel-hide-cancelled");
+  if (!w.isVisible()) return;
+  if (!immediate && ["glass", "starry"].includes(loadConfig().theme.material) && !panelSpec(name)?.standalone && !w.isMinimized() && !w.webContents.isLoading()) {
+    w.webContents.send("panel-hiding");
+    const timer = setTimeout(() => {
+      panelHideTimers.delete(name);
+      if (usable(w) && panels[name] === w) {
+        w.hide();
+        notifyPanels();
+      }
+    }, 190);
+    panelHideTimers.set(name, timer);
+    notifyPanels();
+    return;
+  }
+  w.hide();
+  notifyPanels();
+}
 function togglePanel(name) { isShowing(name) ? hidePanel(name) : showPanel(name); }
+
+// Overview tiles are temporary: individual widgets always reopen at their own saved positions.
+function showOverview(names) {
+  const items = names.filter((name) => panelSpec(name) && !panelSpec(name).standalone);
+  if (!items.length) return;
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const gap = 14, margin = 24;
+  const cols = Math.ceil(Math.sqrt(items.length * area.width / area.height));
+  const rows = Math.ceil(items.length / cols);
+  const tileW = Math.floor((area.width - margin * 2 - gap * (cols - 1)) / cols);
+  const tileH = Math.floor((area.height - margin * 2 - gap * (rows - 1)) / rows);
+  items.forEach((name, i) => {
+    const w = panelWindow(name);
+    if (!w) return;
+    const original = savedBounds(name);
+    clearTimeout(panelHideTimers.get(name));
+    panelHideTimers.delete(name);
+    w.webContents.send("panel-hide-cancelled");
+    overviewBounds.set(name, original);
+    const x = area.x + margin + (i % cols) * (tileW + gap);
+    const y = area.y + margin + Math.floor(i / cols) * (tileH + gap);
+    const [minW, minH] = panelSpec(name).min;
+    const width = Math.min(tileW, Math.max(minW, original.width));
+    const height = Math.min(tileH, Math.max(minH, original.height));
+    w.setBounds({ x: x + Math.max(0, Math.floor((tileW - width) / 2)), y: y + Math.max(0, Math.floor((tileH - height) / 2)), width, height });
+    if (w.isMinimized()) w.restore();
+    w.showInactive();
+    if (!w.webContents.isLoading()) w.webContents.send("panel-shown", true);
+    else w.webContents.once("did-finish-load", () => { if (panels[name] === w && w.isVisible()) w.webContents.send("panel-shown", true); });
+  });
+  notifyPanels();
+}
 
 // After the PC wakes up or is unlocked: rebuild any window whose page didn't survive, and have the visible ones
 // repaint (a graphics reset during sleep can leave see-through windows blank). Same for the top widget.
@@ -445,7 +532,7 @@ async function captureScreen() {
   capturing = true;
   const wereVisible = Object.entries(panels).filter(([, w]) => w.isVisible()).map(([n]) => n);
   widget.hide();
-  wereVisible.forEach(hidePanel);
+  wereVisible.forEach((n) => hidePanel(n, true));
   await new Promise((r) => setTimeout(r, 220)); // let the widgets disappear before capturing
   try {
     const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
@@ -535,10 +622,16 @@ function saveHistory(messages) {
 // display: what to show as your message in the chat (null for follow-ups like approvals).
 async function chatTurn(prompt, { display = null, image = false, extraAllowed = [] } = {}) {
   const remembered = hasPremium("memory") ? memories.context() : "";
+  let recalled = "";
+  if (hasPremium("memory") && display !== null) {
+    try { recalled = (await recall(display || prompt, memories, runAI, { mode: activeMode().id, cwd: workDir() }))?.context || ""; }
+    catch { recalled = "Memory lookup is unavailable. Check the saved memories below; if they don't answer, search normally for public information, or say a missing personal detail isn't saved."; }
+  }
   const heard = listenContext(5);
   const visibleWidgets = panelList().filter((p) => p.visible).map((p) => p.label);
   const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Visible widgets: ${visibleWidgets.length ? visibleWidgets.join(", ") : "none"}. Open tasks:\n${tasks.summary()}` +
     (remembered ? `\nThings the user asked you to remember:\n${remembered}` : "") +
+    (recalled ? `\n${recalled}` : "") +
     (heard ? `\nListen is on. What's been playing on the user's computer (last few minutes, transcribed):\n${heard}` : "") + "]" +
     (declinedNote ? `\n[Widget: ${declinedNote}]` : "");
   declinedNote = "";
@@ -762,7 +855,7 @@ function pauseNotifications(minutes) {
 }
 
 // ---------- IPC ----------
-ipcMain.on("set-mode", (_e, mode, size) => placeWidget(mode, size));
+ipcMain.on("set-mode", (_e, mode, size, busy) => placeWidget(mode, size, busy));
 ipcMain.on("focus", () => focusWidget());
 ipcMain.on("hide-widget", () => { saveConfig({ mainHidden: true }); widget.hide(); });
 ipcMain.on("toggle-panel", (_e, name) => togglePanel(name));
@@ -806,7 +899,7 @@ ipcMain.on("widgets-menu", () => {
   Menu.buildFromTemplate([
     ...list.map((p) => ({ label: p.label, type: "checkbox", checked: p.visible, click: () => togglePanel(p.name) })),
     { type: "separator" },
-    { label: "Open all", click: () => list.forEach((p) => showPanel(p.name)) },
+    { label: "Open all", click: () => showOverview(list.map((p) => p.name)) },
     { label: "Hide all", click: () => list.forEach((p) => hidePanel(p.name)) },
     { type: "separator" },
     { label: "Manage widgets…", click: () => openSettings("widgets") },
@@ -816,7 +909,7 @@ ipcMain.on("widgets-menu", () => {
 ipcMain.on("toggle-all-panels", () => {
   const list = panelList();
   if (list.length && list.every((p) => p.visible)) list.forEach((p) => hidePanel(p.name));
-  else list.forEach((p) => showPanel(p.name));
+  else showOverview(list.map((p) => p.name));
 });
 ipcMain.handle("set-pill", (_e, pill) => {
   saveConfig({ pill: { ...DEFAULT_PILL, ...pill } });
@@ -917,8 +1010,9 @@ ipcMain.handle("set-theme", (_e, theme) => {
   const patch = { ...theme };
   if (!hasPremium("colors")) { delete patch.accent; delete patch.background; } // the opacity slider is always free
   if (!hasPremium("liquidGlass")) { delete patch.material; delete patch.tint; }
-  if (patch.material && !["classic", "glass"].includes(patch.material)) delete patch.material;
+  if (patch.material && !["classic", "glass", "starry"].includes(patch.material)) delete patch.material;
   if (patch.tint && !["dark", "light"].includes(patch.tint)) delete patch.tint;
+  if (patch.corners !== undefined) patch.corners = [0, 1, 2, 3, 4].includes(Number(patch.corners)) ? Number(patch.corners) : DEFAULT_THEME.corners;
   const t = { ...DEFAULT_THEME, ...loadConfig().theme, ...patch };
   saveConfig({ theme: t });
   broadcast("theme", t);
@@ -1474,7 +1568,8 @@ const TALK_SYSTEM = `You are Claude, talking with the user out loud through Cloa
 - Talk like a person in a conversation: warm, natural and brief. One to three short sentences, unless they ask for more.
 - No markdown, lists, headings, tables, code, links or emoji. Say numbers, symbols and abbreviations the way you'd say them out loud.
 - For steps, say them in a sentence ("First..., then...").
-- If you're not sure what they meant, ask a short question back.`;
+- If you're not sure what they meant, ask a short question back.
+- For a question about saved memory, use the memory-first lookup in context. If it lacks the answer, search for public facts if needed, or say a missing personal detail isn't saved.`;
 const talkDir = () => path.join(workDir(), "talk");
 function makeTalkChat() {
   fs.mkdirSync(talkDir(), { recursive: true });
@@ -1482,7 +1577,8 @@ function makeTalkChat() {
   fs.writeFileSync(promptFile, TALK_SYSTEM);
   fs.writeFileSync(path.join(talkDir(), "AGENTS.md"), TALK_SYSTEM.replace("You are Claude", "You are ChatGPT"));
   if (provider() === "chatgpt") return new codex.CodexChat(() => ({ cwd: talkDir(), effort: "low", addDirs: [], alwaysWrite: false }));
-  return new ChatSession(() => ({ cwd: talkDir(), tools: "", allowedTools: [], addDirs: [], systemPromptFile: promptFile, model: "haiku", effort: "low", mode: "talk", auth: authSignature() }));
+  return new ChatSession(() => ({ cwd: talkDir(), tools: "Read,WebSearch", allowedTools: ["Read", "WebSearch"],
+    addDirs: hasPremium("memory") ? [memories.filesDir] : [], systemPromptFile: promptFile, model: "haiku", effort: "low", mode: "talk", auth: authSignature() }));
 }
 function makeTalker() {
   return new Talker({
@@ -1495,6 +1591,7 @@ function makeTalker() {
       const remembered = hasPremium("memory") ? memories.context().slice(0, 1500) : "";
       return `Now: ${todayLine()}, ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.${remembered ? ` What the user asked you to remember:\n${remembered}` : ""}`;
     },
+    recall: async (question) => hasPremium("memory") ? (await recall(question, memories, runAI, { cwd: workDir() }))?.context || "" : "",
     aiError: (t) => aiError(t),
     config: () => loadConfig(),
   });
@@ -1506,11 +1603,12 @@ function makeListener() {
     emit: (ch, data) => { panels.listen?.webContents.send(ch, data); if (ch === "listen-state") notifyPanels(); },
     // readFiles: Claude may open the user's saved memory files for an answer.
     runAI: ({ readFiles, ...opts }) => runAI({ cwd: workDir(), tools: "", persist: false,
-      ...(provider() === "claude" ? { model: (CHAT_SPEEDS[loadConfig().chatSpeed] || CHAT_SPEEDS.balanced).model } : {}),
-      ...(readFiles && provider() === "claude" && memories.files.some((f) => f.status === "ready") ? { tools: "Read", allowedTools: ["Read"], addDirs: [memories.filesDir] } : {}),
+      ...(provider() === "claude" ? { model: (CHAT_SPEEDS[loadConfig().chatSpeed] || CHAT_SPEEDS.balanced).model,
+        tools: "Read,WebSearch", allowedTools: ["Read", "WebSearch"], addDirs: hasPremium("memory") ? [memories.filesDir] : [] } : {}),
       ...opts }),
     aiError: (t) => aiError(t),
     memories: () => (hasPremium("memory") ? memories.context() : ""),
+    recall: async (question) => hasPremium("memory") ? (await recall(question, memories, runAI, { cwd: workDir() }))?.context || "" : "",
     today: () => todayLine(),
     addTasks: (items) => {
       const added = tasks.add(items, "claude");
