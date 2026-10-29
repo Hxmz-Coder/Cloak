@@ -137,6 +137,15 @@ const SCENARIOS = {
     }
     const wb = await js(w, `return document.querySelectorAll("#wbtns .icon-btn").length`);
     check("widget buttons render (tasks, notes, open-all)", wb >= 3, wb);
+    const mixed = await call("panel-show", "tasks"); await wait(250);
+    check("only Tasks is open", mixed.find((p) => p.name === "tasks")?.visible && mixed.some((p) => !p.visible));
+    check("open-all button recognizes partially open widgets", await js(w, `return document.querySelector("#wbtns button:last-child").title`) === "Open all widgets");
+    ipcMain.emit("toggle-all-panels"); await wait(400);
+    const opened = await call("get-config");
+    check("open-all fills in closed widgets", opened.panels.length > 0 && opened.panels.every((p) => p.visible));
+    check("open-all button now offers hide all", await js(w, `return document.querySelector("#wbtns button:last-child").title`) === "Hide all widgets");
+    ipcMain.emit("toggle-all-panels"); await wait(400);
+    check("hide-all hides every widget", (await call("get-config")).panels.every((p) => !p.visible));
 
     // settings sections all render without errors
     ipcMain.emit("open-settings", {}, "appearance"); await wait(1800);
@@ -155,6 +164,11 @@ const SCENARIOS = {
     await wait(300);
     check("theme applies to the bar", /91,\s*141,\s*239/.test(await js(w, `return getComputedStyle(document.documentElement).getPropertyValue("--accent")`)));
     check("settings stays opaque", (await js(s, `return getComputedStyle(document.documentElement).getPropertyValue("--bg-alpha")`)).trim() === "1");
+    await call("set-theme", { material: "glass", tint: "light" }); await wait(300);
+    check("glass styling reaches the bar", await js(w, `return document.documentElement.dataset.material + ":" + document.documentElement.dataset.tint`) === "glass:light");
+    check("glass light tint uses readable dark text", await js(s, `return getComputedStyle(document.documentElement).getPropertyValue("--text").trim()`) === "#1d324b");
+    check("glass hides classic color controls", await js(s, `return getComputedStyle(document.getElementById("classicColors")).display`) === "none");
+    await call("set-theme", { material: "classic" }); await wait(200);
 
     // panels: open, add a task with a time, resize from an edge
     toggleAll(); await wait(1500);

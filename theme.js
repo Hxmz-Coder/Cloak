@@ -17,22 +17,36 @@
 
   function apply(theme) {
     if (!theme) return;
-    const rgb = hexToRgb(theme.accent);
+    const glass = theme.material === "glass";
+    const light = glass && theme.tint === "light";
+    document.documentElement.dataset.material = glass ? "glass" : "classic";
+    document.documentElement.dataset.tint = light ? "light" : "dark";
+    const rgb = glass ? (light ? [45, 85, 130] : [164, 202, 255]) : hexToRgb(theme.accent);
     root.setProperty("--accent", `rgb(${rgb.join(",")})`);
     root.setProperty("--accent-rgb", rgb.join(", "));
     root.setProperty("--accent-2", `rgb(${mix(rgb, [255, 255, 255], 0.3).join(",")})`);
     // Dark text on light accents, light text on dark ones.
     root.setProperty("--on-accent", luminance(rgb) > 0.28 ? "#1a1210" : "#ffffff");
     // Some windows (Settings, Welcome) are always fully opaque so they stay easy to read.
-    const a = document.documentElement.hasAttribute("data-opaque") ? 1 : Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
+    const a = document.documentElement.hasAttribute("data-opaque") ? 1 : glass ? (light ? 0.82 : 0.74) : Math.min(1, Math.max(0.3, Number(theme.opacity) || 0.95));
     root.setProperty("--bg-alpha", String(a));
-    root.setProperty("--bg-rgb", hexToRgb(theme.background || "#161413").join(", "));
+    root.setProperty("--native-scheme", glass && light ? "light" : "dark");
+    root.setProperty("--bg-rgb", (glass ? (light ? [238, 245, 252] : [19, 29, 44]) : hexToRgb(theme.background || "#161413")).join(", "));
     // The mark: "cloak" (default), "classic" or "custom" (a picture you chose, as a data: URL).
     const icon = theme.icon === "custom" && theme.iconData ? "custom" : theme.icon === "classic" ? "classic" : "cloak";
     document.documentElement.dataset.icon = icon;
     if (icon === "custom") root.setProperty("--icon-image", `url("${theme.iconData}")`);
   }
 
+  // The highlight follows the pointer without moving the window or its hit area.
+  document.addEventListener("pointermove", (event) => {
+    if (document.documentElement.dataset.material !== "glass") return;
+    const shell = document.querySelector(".shell");
+    if (!shell) return;
+    const bounds = shell.getBoundingClientRect();
+    shell.style.setProperty("--cursor-x", `${((event.clientX - bounds.left) / bounds.width) * 100}%`);
+    shell.style.setProperty("--cursor-y", `${((event.clientY - bounds.top) / bounds.height) * 100}%`);
+  });
   window.overlay?.getTheme?.().then(apply);
   window.overlay?.onTheme?.(apply);
 })();

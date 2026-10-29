@@ -41,7 +41,7 @@
   /* appearance */
   .swatches { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .sw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 2px rgba(0,0,0,.25); }
-  .sw.on { border-color: #fff; }
+  .sw.on { border-color: var(--text); }
   .custom-color { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
   input[type=color] { width: 34px; height: 30px; border: 1px solid var(--border); border-radius: 8px; background: none; padding: 2px; cursor: pointer; }
   input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -138,12 +138,18 @@
       <section id="s-appearance">
         <h2>Appearance</h2>
         <p class="lead">Changes apply to every widget right away.</p>
-        <h3 data-premium="colors">Accent color</h3>
-        <div class="swatches" id="swatches"></div>
-        <h3 data-premium="colors">Background color</h3>
-        <div class="swatches" id="bgSwatches"></div>
-        <h3>Background opacity</h3>
-        <div class="row"><input type="range" id="opacity" min="50" max="100" step="1" /><span id="opacityVal" class="muted" style="width:44px;text-align:right"></span></div>
+        <h3 data-premium="liquidGlass">Material</h3>
+        <div class="seg" id="materialPick"><button data-v="classic">Classic</button><button data-v="glass">Liquid Glass</button></div>
+        <p class="hint" style="margin:6px 0 0">A softly layered glass look, with subtle light and movement.</p>
+        <div id="glassTint" style="display:none"><h3>Glass tint</h3><div class="seg" id="tintPick"><button data-v="dark">Dark</button><button data-v="light">Light</button></div></div>
+        <div id="classicColors">
+          <h3 data-premium="colors">Accent color</h3>
+          <div class="swatches" id="swatches"></div>
+          <h3 data-premium="colors">Background color</h3>
+          <div class="swatches" id="bgSwatches"></div>
+          <h3>Background opacity</h3>
+          <div class="row"><input type="range" id="opacity" min="50" max="100" step="1" /><span id="opacityVal" class="muted" style="width:44px;text-align:right"></span></div>
+        </div>
         <div class="preview">
           <div class="pp"><div class="logo">✳</div><b>Cloak</b></div>
           <div class="card">
@@ -267,6 +273,7 @@
         </div>
         <h3>Your widgets</h3>
         <div id="wList"></div>
+        <div class="item" style="margin-top:14px"><div class="grow"><div class="t">Shopping watchlist <span class="tag">Planned for Cloak Pro</span></div><div class="d" style="white-space:normal">Save things you want to buy and follow price, availability, and stock changes. Not available yet.</div></div></div>
         <div class="btns" style="margin-top:6px"><button class="btn ghost" id="resetPos">Reset all widget positions</button></div>
       </section>
 

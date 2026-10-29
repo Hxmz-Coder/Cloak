@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Hxmz-Coder/overclaude.git"
+    "url": "https://github.com/Hxmz-Coder/Cloak.git"
   },
   "devDependencies": {
     "electron": "^33.0.0"

@@ -1,3 +1,8 @@
 node_modules/
 _*.js
 tests/results/
+.env
+.env.*
+config.json
+*.key
+*.pem

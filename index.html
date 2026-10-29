@@ -12,8 +12,6 @@
 
   /* ---------- top row ---------- */
   .top { display: flex; align-items: center; gap: 8px; padding: 0 8px 0 10px; height: 44px; flex-shrink: 0; }
-  body.busy:not([data-mode="pill"]) .logo { animation: spin 1.6s linear infinite; } /* the pill itself never changes */
-  @keyframes spin { to { transform: rotate(360deg); } }
   /* pill contents: sized to fit, so the window can shrink around them */
   .pill-info { display: inline-flex; align-items: center; gap: 8px; flex: none; white-space: nowrap; padding-right: 6px; }
   .pill-info:empty, .pill-info.blank { display: none !important; }
@@ -102,10 +100,11 @@
   .tag-shot { display: inline-block; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; margin-right: 6px; }
   .shot { display: block; max-width: 100%; border-radius: 8px; margin-bottom: 6px; border: 1px solid var(--border); }
   .err { color: #ff9b8a; }
-  .thinking { color: var(--muted); font-style: italic; }
-  .thinking span { animation: blink 1.2s infinite; }
+  .thinking { display: inline-flex; align-items: center; gap: 5px; height: 18px; }
+  .thinking span { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); animation: think-dot 1.5s ease-in-out infinite; }
   .thinking span:nth-child(2) { animation-delay: .2s; } .thinking span:nth-child(3) { animation-delay: .4s; }
-  @keyframes blink { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+  @keyframes think-dot { 0%, 65%, 100% { transform: scale(1); opacity: .55; } 30% { transform: scale(1.55); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .thinking span { animation: none; opacity: .85; } }
 
   /* approval card */
   .approve { align-self: stretch; margin-top: 10px; border: 1px solid rgba(227,184,107,.4); background: rgba(227,184,107,.07);
@@ -139,6 +138,7 @@
   body.notifying #island { display: flex; }
   body[data-mode="notify"] .top, body[data-mode="notify"] .expanded-only { display: none !important; }
   body[data-mode="notify"] .shell { border-radius: 24px; background: rgba(14, 13, 12, .97); animation: island-in .45s cubic-bezier(.2, 1.25, .35, 1); }
+  html[data-material="glass"] body[data-mode="notify"] .shell { background: var(--bg); }
   @keyframes island-in { 0% { transform: scale(.4, .55); opacity: .5; border-radius: 999px; } 100% { transform: none; opacity: 1; } }
   body[data-mode="notify"].urgent .shell { animation: island-in .45s cubic-bezier(.2, 1.25, .35, 1), ring 1.4s ease-in-out .45s 3; }
   @keyframes ring { 50% { border-color: rgba(var(--accent-rgb), .95); } }
@@ -147,6 +147,7 @@
   /* while the chat bar is open, it drops in over the top row instead */
   body:not([data-mode="notify"]).notifying #island { position: absolute; top: 4px; left: 6px; right: 6px; z-index: 20; border-radius: 16px;
     background: rgba(14, 13, 12, .98); border: 1px solid rgba(var(--accent-rgb), .5); animation: drop .3s ease-out; }
+  html[data-material="glass"] body:not([data-mode="notify"]).notifying #island { background: var(--bg); backdrop-filter: blur(28px); }
   @keyframes drop { from { transform: translateY(-110%); } to { transform: none; } }
   .n-icon { width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; flex: none;
     background: rgba(var(--accent-rgb), .18); color: var(--accent); }

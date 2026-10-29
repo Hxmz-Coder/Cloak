@@ -6,7 +6,11 @@ It runs Claude through the [Claude Code](https://code.claude.com) CLI, using eit
 
 **ChatGPT instead (early).** In Settings, General, you can switch the AI to **ChatGPT**. Cloak then talks to ChatGPT through OpenAI's [Codex CLI](https://github.com/openai/codex), signed in with your ChatGPT account (Plus or Pro). Settings has Install and Sign in buttons for it. Everything works the same, with one difference: ChatGPT starts read-only, and asks for one **Allow** per request before it changes files or runs commands. Claude's cards ask about each action separately.
 
-**v1.1.0**
+## What Cloak does
+
+Cloak keeps an AI chat and useful widgets one hover away without taking over your desktop. Use your Claude subscription through Claude Code, your own Anthropic API key, or the optional ChatGPT/Codex connection. It runs locally on Windows; macOS support is early. Your tasks, notes and settings stay on your computer.
+
+**Want to try it?** Install Node.js 18+, download the [Cloak ZIP](https://github.com/Hxmz-Coder/Cloak/archive/refs/heads/main.zip), extract it, then double-click `start.bat` (Windows) or `start.command` (Mac). The setup guide helps connect your AI account. See [Run it](#run-it) for detailed steps and [Requirements](#requirements) for what you need.
 
 ## Features
 
@@ -31,7 +35,7 @@ It runs Claude through the [Claude Code](https://code.claude.com) CLI, using eit
 - **Calendar and Pomodoro** come built in: a month calendar for events and your tasks, with filters, and a focus timer with adjustable lengths, check-ins and daily totals.
 - **On-task checks.** In Homework mode, or while a Pomodoro focus session runs, Cloak takes a screenshot every few minutes (every 3 by default) and asks Claude whether you're on task. If you've drifted (YouTube, games, social media), a notification nudges you back to what you should be doing. Each screenshot is deleted right after. Turn it off, or change how often, in **Settings, Claude & privacy**. Like any widget, you can ask Claude to change them, or delete them.
 - **Custom widgets.** In Settings, go to Widgets, describe a widget, and Claude codes and installs it (a calendar, focus timer, habit tracker and so on). You can ask Claude to change it later, or undo a change. Claude can change the built-in **Tasks** and **Notes** too. Its version takes their place, and **Restore original** brings the built-in one back. Your tasks and notes stay as they are either way. Widgets (and Tasks and Notes) can be moved, and resized from any edge. Every widget gets a button in the chat bar. When you have more than four, the rest go in a folder, and one button opens or hides all of them.
-- **Settings.** The icon (the Cloak logo in your accent color, the classic star, or your own picture), accent and background colors, opacity, top-widget style, modes, shortcut buttons, widgets, chat speed, privacy, sign-in method, keyboard shortcuts, and starting with Windows.
+- **Settings.** The icon (the Cloak logo in your accent color, the classic star, or your own picture), classic colors and opacity or Liquid Glass with a light/dark tint, top-widget style, modes, shortcut buttons, widgets, chat speed, privacy, AI sign-in method, keyboard shortcuts, and starting with Windows. Shopping watchlist is a planned Cloak Pro feature, not available yet.
 
 ## Requirements
 
@@ -75,7 +79,7 @@ You can also run `npm install` and then `npm start`.
 
 You can change these shortcuts in **Settings, Keyboard**. In the chat, the Up arrow brings back your last message.
 
-If `claude` isn't on your PATH, set `CLAUDE_CLI_PATH` to its full path. With the subscription option, the app removes `ANTHROPIC_API_KEY` and similar variables before running Claude, so you're never billed by accident. With the API key option, your key is stored encrypted on your PC (Windows data protection) and is only passed to Claude Code.
+If `claude` isn't on your PATH, set `CLAUDE_CLI_PATH` to its full path. With the subscription option, the app removes `ANTHROPIC_API_KEY` and similar variables before running Claude, so you're never billed by accident. With the API key option, your key is encrypted at rest using Electron's safeStorage and is passed only to the Claude Code process. Never put keys in the repository; Cloak ignores local `.env`, `config.json`, and key files.
 
 ## On a Mac (early)
 

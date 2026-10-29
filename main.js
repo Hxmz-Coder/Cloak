@@ -84,6 +84,8 @@ Work autonomously. When a request takes several steps, carry them all out withou
 
 Some actions need the user's approval: shell commands that change things, creating or editing files, and opening web pages. When one of these is denied, that is expected: the widget automatically shows the user an Allow button for exactly that action, and if they allow it you'll be asked to retry. So finish everything else you can, then say in one short line what you're waiting on (e.g. "Waiting for your OK to create notes.txt."). Don't explain permission settings, don't suggest starting a new session or running it themselves, and never try to get around a block another way.
 
+For current information like weather, use WebSearch before answering. If the user's location isn't known, ask for a city rather than assuming one. Give the forecast date and source, and say when live results aren't available. Do not claim a search happened unless a tool returned results.
+
 Screenshots: when the user's message lists screenshot paths, open them with the Read tool before answering.
 
 Task list: the user has a task list widget. To add tasks to it, put a fenced code block with the language "tasks" in your reply, one task per line as "category | title | due | time", where category is homework, email, unfinished or other, due is an optional YYYY-MM-DD date, and time is an optional 24-hour HH:MM (only with a due date). Put dates and times in those fields, not in the title. Example: "homework | Study for biology quiz | 2026-10-17 | 16:00". The widget removes the block and adds the tasks. Add tasks when the user asks, or when you notice something they clearly need to do later. Don't add duplicates of their open tasks.
@@ -150,7 +152,7 @@ const PANELS = {
   settings: { file: "settings.html", size: [800, 600], min: [800, 600], label: "Settings", standalone: true, fixed: true },
   welcome: { file: "welcome.html", size: [760, 580], min: [760, 580], label: "Welcome", standalone: true, fixed: true },
 };
-const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95, background: "#161413", icon: "cloak", iconData: null };
+const DEFAULT_THEME = { accent: "#d97757", opacity: 0.95, background: "#161413", material: "classic", tint: "dark", icon: "cloak", iconData: null };
 const DEFAULT_HOTKEYS = { toggle: "CommandOrControl+Shift+Space", capture: "CommandOrControl+Shift+S", listen: "CommandOrControl+Alt+L" };
 
 const DEFAULT_PILL = { label: "Claude", style: "island", clock: false, date: false, taskCount: false, nextTask: false, widgets: [], showMode: true, position: "center" };
@@ -534,7 +536,8 @@ function saveHistory(messages) {
 async function chatTurn(prompt, { display = null, image = false, extraAllowed = [] } = {}) {
   const remembered = hasPremium("memory") ? memories.context() : "";
   const heard = listenContext(5);
-  const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Open tasks:\n${tasks.summary()}` +
+  const visibleWidgets = panelList().filter((p) => p.visible).map((p) => p.label);
+  const context = `[Widget context. Mode: ${activeMode().name}. Now: ${todayLine()}, ${new Date().toLocaleTimeString()}. Visible widgets: ${visibleWidgets.length ? visibleWidgets.join(", ") : "none"}. Open tasks:\n${tasks.summary()}` +
     (remembered ? `\nThings the user asked you to remember:\n${remembered}` : "") +
     (heard ? `\nListen is on. What's been playing on the user's computer (last few minutes, transcribed):\n${heard}` : "") + "]" +
     (declinedNote ? `\n[Widget: ${declinedNote}]` : "");
@@ -809,10 +812,10 @@ ipcMain.on("widgets-menu", () => {
     { label: "Manage widgets…", click: () => openSettings("widgets") },
   ]).popup({ window: widget });
 });
-// Open-all button: shows every widget, or hides them all if any are open. The chat bar stays as it is.
+// Open-all button: fills in any closed widgets, or hides them when all are open. The chat bar stays as it is.
 ipcMain.on("toggle-all-panels", () => {
   const list = panelList();
-  if (list.some((p) => p.visible)) list.forEach((p) => hidePanel(p.name));
+  if (list.length && list.every((p) => p.visible)) list.forEach((p) => hidePanel(p.name));
   else list.forEach((p) => showPanel(p.name));
 });
 ipcMain.handle("set-pill", (_e, pill) => {
@@ -911,8 +914,12 @@ ipcMain.handle("pick-icon", async () => {
   return t;
 });
 ipcMain.handle("set-theme", (_e, theme) => {
-  if (!hasPremium("colors")) { delete theme.accent; delete theme.background; } // the opacity slider is always free
-  const t = { ...DEFAULT_THEME, ...loadConfig().theme, ...theme };
+  const patch = { ...theme };
+  if (!hasPremium("colors")) { delete patch.accent; delete patch.background; } // the opacity slider is always free
+  if (!hasPremium("liquidGlass")) { delete patch.material; delete patch.tint; }
+  if (patch.material && !["classic", "glass"].includes(patch.material)) delete patch.material;
+  if (patch.tint && !["dark", "light"].includes(patch.tint)) delete patch.tint;
+  const t = { ...DEFAULT_THEME, ...loadConfig().theme, ...patch };
   saveConfig({ theme: t });
   broadcast("theme", t);
   return t;
@@ -1050,7 +1057,7 @@ ipcMain.handle("panel-enabled", (_e, name, on) => {
 ipcMain.handle("panel-show", (_e, name) => { showPanel(name); return panelList(); });
 
 // ---------- sign-in: Claude subscription or Anthropic API key ----------
-// The API key is stored encrypted with Windows' own protection (safeStorage) and only ever handed to the CLI.
+// The API key is stored encrypted with Electron safeStorage and only ever handed to the CLI.
 function loadAuth() {
   const cfg = loadConfig();
   let apiKey = null;
@@ -1112,7 +1119,7 @@ ipcMain.handle("auth-set", (_e, { mode, apiKey }) => {
   if (mode === "apiKey" && apiKey) {
     const key = String(apiKey).trim();
     if (!/^sk-ant-[\w-]{20,}$/.test(key)) return { ok: false, error: "That doesn't look like an Anthropic API key. It should start with sk-ant-." };
-    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "Windows can't store the key securely on this account." };
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This computer can't store the key securely right now." };
     patch.apiKeyEnc = safeStorage.encryptString(key).toString("base64");
     patch.apiKeyHint = `sk-ant-…${key.slice(-4)}`;
   }

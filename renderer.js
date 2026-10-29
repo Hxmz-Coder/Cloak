@@ -26,7 +26,7 @@ function md(s) {
   }).join("").replace(/\n+(<pre>)/g, "$1").replace(/(<\/pre>)\n+/g, "$1");
 }
 const hasChat = () => log.children.length > 0;
-const THINKING = '<span class="thinking">thinking<span>.</span><span>.</span><span>.</span></span>';
+const THINKING = '<span class="thinking" role="status" aria-label="Thinking"><span></span><span></span><span></span></span>';
 
 // ---------- widget states: pill -> bar (hover) -> chat / edit ----------
 function setMode(m) {
@@ -185,7 +185,7 @@ function renderWidgetButtons(panels) {
   }
   const all = document.createElement("button");
   all.className = "icon-btn";
-  all.title = panels.some((p) => p.visible) ? "Hide all widgets" : "Open all widgets";
+  all.title = panels.length && panels.every((p) => p.visible) ? "Hide all widgets" : "Open all widgets";
   all.innerHTML = ICONS.all;
   all.onclick = () => window.overlay.toggleAllPanels();
   box.appendChild(all);

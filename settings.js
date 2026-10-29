@@ -21,6 +21,7 @@ function show(section) {
 $("nav").addEventListener("click", (e) => { if (e.target.dataset.s) show(e.target.dataset.s); });
 ov.onSettingsSection((s) => { show(s); refresh(); });
 ov.onPanelShown(refresh);
+ov.onTheme?.((theme) => { if (S) { S.theme = theme; renderAppearance(); } });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !listening) ov.hidePanel(); });
 
 // ---------- appearance ----------
@@ -29,6 +30,11 @@ const COLORS = [
   ["Blue", "#5b8def"], ["Indigo", "#7b7ff0"], ["Purple", "#a77be6"], ["Pink", "#e06aa6"], ["Graphite", "#9aa0a8"],
 ];
 function renderAppearance() {
+  const glass = S.theme.material === "glass";
+  $("classicColors").style.display = glass ? "none" : "";
+  $("glassTint").style.display = glass ? "" : "none";
+  document.querySelectorAll("#materialPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === (glass ? "glass" : "classic")));
+  document.querySelectorAll("#tintPick button").forEach((b) => b.classList.toggle("on", b.dataset.v === (S.theme.tint || "dark")));
   const cur = S.theme.accent.toLowerCase();
   $("swatches").innerHTML = COLORS.map(([name, hex]) =>
     `<button class="sw ${hex === cur ? "on" : ""}" title="${name}" data-hex="${hex}" style="background:${hex}"></button>`).join("") +
@@ -58,6 +64,8 @@ $("opacity").addEventListener("input", () => {
   opTimer = setTimeout(() => ov.setTheme({ opacity: $("opacity").value / 100 }).then((t) => (S.theme = t)), 60);
 });
 $("themeReset").onclick = () => setTheme({ accent: "#d97757", background: "#161413", opacity: 0.95 });
+$("materialPick").addEventListener("click", (e) => { if (e.target.dataset.v) setTheme({ material: e.target.dataset.v }); });
+$("tintPick").addEventListener("click", (e) => { if (e.target.dataset.v) setTheme({ tint: e.target.dataset.v }); });
 // Background color: dark tones that keep text readable (any color via Custom).
 const BACKGROUNDS = [["Charcoal", "#161413"], ["Black", "#050505"], ["Slate", "#141821"], ["Navy", "#0f1630"], ["Forest", "#0f1d16"],
   ["Plum", "#1e1224"], ["Wine", "#24100f"], ["Mocha", "#241a14"]];
